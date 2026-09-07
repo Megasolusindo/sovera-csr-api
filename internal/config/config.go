@@ -18,6 +18,12 @@ type Config struct {
 	ScraperServiceURL string
 	ScraperAPIKey     string
 	WebhookURL        string
+	S3Endpoint        string
+	S3Bucket          string
+	S3Region          string
+	S3AccessKey       string
+	S3SecretKey       string
+	StorageLocalDir   string
 }
 
 func LoadConfig() *Config {
@@ -37,6 +43,12 @@ func LoadConfig() *Config {
 		ScraperServiceURL: getEnv("SCRAPER_SERVICE_URL", "https://api-scraper.megasolusindo.com/api/v1/scrape-tasks"),
 		ScraperAPIKey:     getEnv("SCRAPER_API_KEY", "change-me"),
 		WebhookURL:        getEnv("WEBHOOK_URL", "http://host.docker.internal:4000/api/v1/webhooks/crawler?secret=super_secret_crawler_key_123"),
+		S3Endpoint:        getEnv("S3_ENDPOINT", "http://10.10.29.177:9000"),
+		S3Bucket:          getEnv("S3_BUCKET", "sovera-templates"),
+		S3Region:          getEnv("S3_REGION", "us-east-1"),
+		S3AccessKey:       getEnv("S3_ACCESS_KEY", "minioadmin"),
+		S3SecretKey:       getEnv("S3_SECRET_KEY", "minioadmin"),
+		StorageLocalDir:   getEnv("STORAGE_LOCAL_DIR", "/tmp/sovera_storage"),
 	}
 }
 

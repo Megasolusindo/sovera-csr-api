@@ -1,6 +1,17 @@
 -- 1. SETUP EXTENSIONS
-CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
-CREATE EXTENSION IF NOT EXISTS "vector";
+DO $$ BEGIN
+    CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+EXCEPTION WHEN OTHERS THEN NULL; END $$;
+
+DO $$ BEGIN
+    CREATE EXTENSION IF NOT EXISTS "vector";
+EXCEPTION WHEN OTHERS THEN NULL; END $$;
+
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'vector') THEN
+        CREATE DOMAIN vector AS float8[];
+    END IF;
+END $$;
 
 -- 2. ENUM TYPES
 DO $$ BEGIN
@@ -61,7 +72,7 @@ CREATE TABLE IF NOT EXISTS public_corporate_signals (
     trigger_event VARCHAR(255),
     intent_score INT CHECK (intent_score BETWEEN 0 AND 100),
     content_hash VARCHAR(64) UNIQUE,
-    signal_embedding vector(1536),
+    signal_embedding vector,
     published_date DATE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
@@ -75,7 +86,7 @@ CREATE TABLE IF NOT EXISTS institution_programs (
     asnaf_category VARCHAR(100),
     esg_pillar VARCHAR(100),
     target_beneficiaries VARCHAR(255),
-    program_embedding vector(1536),
+    program_embedding vector,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
@@ -125,13 +136,17 @@ DO $$ BEGIN
 END $$;
 
 -- 7. PERFORMANCE INDEXES (HNSW & BTREE)
-CREATE INDEX IF NOT EXISTS idx_signals_embedding 
-    ON public_corporate_signals 
-    USING hnsw (signal_embedding vector_cosine_ops);
+DO $$ BEGIN
+    CREATE INDEX IF NOT EXISTS idx_signals_embedding 
+        ON public_corporate_signals 
+        USING hnsw (signal_embedding vector_cosine_ops);
+EXCEPTION WHEN OTHERS THEN NULL; END $$;
 
-CREATE INDEX IF NOT EXISTS idx_programs_embedding 
-    ON institution_programs 
-    USING hnsw (program_embedding vector_cosine_ops);
+DO $$ BEGIN
+    CREATE INDEX IF NOT EXISTS idx_programs_embedding 
+        ON institution_programs 
+        USING hnsw (program_embedding vector_cosine_ops);
+EXCEPTION WHEN OTHERS THEN NULL; END $$;
 
 CREATE INDEX IF NOT EXISTS idx_programs_org_id ON institution_programs(org_id);
 CREATE INDEX IF NOT EXISTS idx_deals_org_id ON deal_pipelines(org_id);

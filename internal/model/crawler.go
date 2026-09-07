@@ -51,3 +51,83 @@ type ScrapeTaskPayload struct {
 	CallbackURL  string            `json:"callback_url"`
 	Config       *ScrapeTaskConfig `json:"config,omitempty"`
 }
+
+type DiscoveryTaskPayload struct {
+	TaskID       string `json:"task_id"`
+	ClientOrigin string `json:"client_origin"`
+	Query        string `json:"query"`
+	Engine       string `json:"engine,omitempty"`
+	Limit        int    `json:"limit,omitempty"`
+	CallbackURL  string `json:"callback_url"`
+}
+
+type CrawlJobPayload struct {
+	TaskID       string   `json:"task_id"`
+	TargetID     string   `json:"target_id,omitempty"`
+	ClientOrigin string   `json:"client_origin"`
+	BaseURL      string   `json:"base_url"`
+	URLPatterns  []string `json:"url_patterns,omitempty"`
+	MaxDepth     int      `json:"max_depth,omitempty"`
+	MaxPages     int      `json:"max_pages,omitempty"`
+	CallbackURL  string   `json:"callback_url"`
+}
+
+type TaskAcceptedResponse struct {
+	TaskID string `json:"task_id"`
+	Status string `json:"status"`
+}
+
+type InspectBatchItemRequest struct {
+	ReferenceID string `json:"reference_id"`
+	TargetURL   string `json:"target_url"`
+	KnownHash   string `json:"known_hash"`
+}
+
+type InspectBatchPayload struct {
+	Items []InspectBatchItemRequest `json:"items"`
+}
+
+type InspectBatchResult struct {
+	ReferenceID    string `json:"reference_id"`
+	TargetURL      string `json:"target_url"`
+	HTTPStatusCode int    `json:"http_status_code"`
+	IsModified     bool   `json:"is_modified"`
+	CurrentHash    string `json:"current_hash"`
+}
+
+type InspectBatchResponse struct {
+	CheckedAt    string               `json:"checked_at"`
+	TotalChecked int                  `json:"total_checked"`
+	Results      []InspectBatchResult `json:"results"`
+}
+
+type DocumentInspectPayload struct {
+	FileURL            string `json:"file_url"`
+	KnownETag          string `json:"known_etag,omitempty"`
+	KnownContentLength int64  `json:"known_content_length,omitempty"`
+}
+
+type DocumentInspectResponse struct {
+	FileURL        string `json:"file_url"`
+	HTTPStatusCode int    `json:"http_status_code"`
+	IsModified     bool   `json:"is_modified"`
+	ETag           string `json:"etag,omitempty"`
+	ContentLength  int64  `json:"content_length,omitempty"`
+	ContentType    string `json:"content_type,omitempty"`
+	LastModified   string `json:"last_modified,omitempty"`
+}
+
+type TaskStatusResponse struct {
+	TaskID          string `json:"task_id"`
+	TargetID        string `json:"target_id,omitempty"`
+	ClientOrigin    string `json:"client_origin,omitempty"`
+	SourceType      string `json:"source_type"`
+	TargetURL       string `json:"target_url"`
+	CallbackURL     string `json:"callback_url,omitempty"`
+	Status          string `json:"status"` // PENDING, ACCEPTED, COMPLETED, FAILED
+	HTTPStatusCode  int    `json:"http_status_code,omitempty"`
+	ExecutionTimeMs int    `json:"execution_time_ms,omitempty"`
+	ContentHash     string `json:"content_hash,omitempty"`
+	CreatedAt       string `json:"created_at,omitempty"`
+	UpdatedAt       string `json:"updated_at,omitempty"`
+}

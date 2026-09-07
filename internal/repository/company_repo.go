@@ -17,8 +17,32 @@ func NewCompanyRepository(pool *pgxpool.Pool) *CompanyRepository {
 	return &CompanyRepository{pool: pool}
 }
 
+type CompanyStats struct {
+	TotalCount    int `json:"total_count"`
+	VerifiedCount int `json:"verified_count"`
+	TbkBumnCount  int `json:"tbk_bumn_count"`
+}
+
+func (r *CompanyRepository) GetCompanyStats(ctx context.Context) (*CompanyStats, error) {
+	if r.pool == nil {
+		return &CompanyStats{TotalCount: 0, VerifiedCount: 0, TbkBumnCount: 0}, nil
+	}
+	var stats CompanyStats
+	err := r.pool.QueryRow(ctx, `
+		SELECT 
+			COUNT(*),
+			COUNT(*) FILTER (WHERE website IS NOT NULL AND website <> ''),
+			COUNT(*) FILTER (WHERE is_public = true OR company_type IN ('BUMN', 'SWASTA_TBK'))
+		FROM company.companies;
+	`).Scan(&stats.TotalCount, &stats.VerifiedCount, &stats.TbkBumnCount)
+	if err != nil {
+		return &CompanyStats{TotalCount: 0, VerifiedCount: 0, TbkBumnCount: 0}, nil
+	}
+	return &stats, nil
+}
+
 // ListCompanies retrieves a paginated list of companies with target and signal counts.
-func (r *CompanyRepository) ListCompanies(ctx context.Context, limit, offset int, search, sector string) ([]model.CompanyDetail, int, error) {
+func (r *CompanyRepository) ListCompanies(ctx context.Context, limit, offset int, search, sector, verificationStatus string) ([]model.CompanyDetail, int, error) {
 	if r.pool == nil {
 		return nil, 0, nil
 	}
@@ -39,7 +63,13 @@ func (r *CompanyRepository) ListCompanies(ctx context.Context, limit, offset int
 		argIdx++
 	}
 
-	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM companies c %s", whereClause)
+	if verificationStatus == "VERIFIED" {
+		whereClause += " AND (c.website IS NOT NULL AND c.website <> '')"
+	} else if verificationStatus == "PENDING" {
+		whereClause += " AND (c.website IS NULL OR c.website = '')"
+	}
+
+	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM company.companies c %s", whereClause)
 	var total int
 	if err := r.pool.QueryRow(ctx, countQuery, args...).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("failed to count companies: %w", err)
@@ -50,13 +80,13 @@ func (r *CompanyRepository) ListCompanies(ctx context.Context, limit, offset int
 			c.id::text, c.name, c.legal_name, c.slug, c.industry_id, c.industry_sector,
 			c.company_type, c.website, c.linkedin_url, c.headquarters,
 			c.employee_range, c.revenue_range, c.is_public, c.ticker,
-			c.parent_company_id::text, COALESCE(c.alias_keywords, '{}'), c.created_at, c.updated_at,
+			c.parent_company_id::text, COALESCE(c.priority_tier, 'TIER_3'), COALESCE(c.csr_category, 'POTENSIAL'), COALESCE(c.partner_ngo, (SELECT p.csr_department_name FROM company_csr_profiles p WHERE p.company_id = c.id LIMIT 1)), COALESCE(c.alias_keywords, '{}'), c.created_at, c.updated_at,
 			(SELECT COUNT(*) FROM crawling_targets t WHERE t.company_id = c.id) AS target_count,
-			(SELECT COUNT(*) FROM public_corporate_signals s WHERE s.company_id = c.id OR s.company_name ILIKE c.name) AS signal_count,
-			COALESCE((SELECT SUM(s.estimated_budget_signal) FROM public_corporate_signals s WHERE s.company_id = c.id OR s.company_name ILIKE c.name), 0) AS total_budget
-		FROM companies c
+			(SELECT COUNT(*) FROM intelligence.company_signals s WHERE s.company_id = c.id OR s.company_name ILIKE c.name) AS signal_count,
+			COALESCE((SELECT SUM(s.estimated_budget_signal) FROM intelligence.company_signals s WHERE s.company_id = c.id OR s.company_name ILIKE c.name), 0) AS total_budget
+		FROM company.companies c
 		%s
-		ORDER BY signal_count DESC, c.name ASC
+		ORDER BY signal_count DESC, c.priority_tier ASC, c.name ASC
 		LIMIT $%d OFFSET $%d;
 	`, whereClause, argIdx, argIdx+1)
 
@@ -75,7 +105,7 @@ func (r *CompanyRepository) ListCompanies(ctx context.Context, limit, offset int
 			&cd.ID, &cd.Name, &cd.LegalName, &cd.Slug, &cd.IndustryID, &cd.IndustrySector,
 			&cd.CompanyType, &cd.Website, &cd.LinkedinURL, &cd.Headquarters,
 			&cd.EmployeeRange, &cd.RevenueRange, &cd.IsPublic, &cd.Ticker,
-			&cd.ParentCompanyID, &cd.AliasKeywords, &cd.CreatedAt, &cd.UpdatedAt,
+			&cd.ParentCompanyID, &cd.PriorityTier, &cd.CSRCategory, &cd.PartnerNGO, &cd.AliasKeywords, &cd.CreatedAt, &cd.UpdatedAt,
 			&cd.TargetCount, &cd.SignalCount, &cd.TotalBudget,
 		)
 		if err != nil {
@@ -98,11 +128,11 @@ func (r *CompanyRepository) GetCompanyByID(ctx context.Context, idOrSlug string)
 			c.id::text, c.name, c.legal_name, c.slug, c.industry_id, c.industry_sector,
 			c.company_type, c.website, c.linkedin_url, c.headquarters,
 			c.employee_range, c.revenue_range, c.is_public, c.ticker,
-			c.parent_company_id::text, COALESCE(c.alias_keywords, '{}'), c.created_at, c.updated_at,
+			c.parent_company_id::text, COALESCE(c.priority_tier, 'TIER_3'), COALESCE(c.csr_category, 'POTENSIAL'), COALESCE(c.partner_ngo, (SELECT p.csr_department_name FROM company_csr_profiles p WHERE p.company_id = c.id LIMIT 1)), COALESCE(c.alias_keywords, '{}'), c.created_at, c.updated_at,
 			(SELECT COUNT(*) FROM crawling_targets t WHERE t.company_id = c.id) AS target_count,
-			(SELECT COUNT(*) FROM public_corporate_signals s WHERE s.company_id = c.id OR s.company_name ILIKE c.name) AS signal_count,
-			COALESCE((SELECT SUM(s.estimated_budget_signal) FROM public_corporate_signals s WHERE s.company_id = c.id OR s.company_name ILIKE c.name), 0) AS total_budget
-		FROM companies c
+			(SELECT COUNT(*) FROM intelligence.company_signals s WHERE s.company_id = c.id OR s.company_name ILIKE c.name) AS signal_count,
+			COALESCE((SELECT SUM(s.estimated_budget_signal) FROM intelligence.company_signals s WHERE s.company_id = c.id OR s.company_name ILIKE c.name), 0) AS total_budget
+		FROM company.companies c
 		WHERE c.id::text = $1 OR c.slug = $1
 		LIMIT 1;
 	`
@@ -112,7 +142,7 @@ func (r *CompanyRepository) GetCompanyByID(ctx context.Context, idOrSlug string)
 		&cd.ID, &cd.Name, &cd.LegalName, &cd.Slug, &cd.IndustryID, &cd.IndustrySector,
 		&cd.CompanyType, &cd.Website, &cd.LinkedinURL, &cd.Headquarters,
 		&cd.EmployeeRange, &cd.RevenueRange, &cd.IsPublic, &cd.Ticker,
-		&cd.ParentCompanyID, &cd.AliasKeywords, &cd.CreatedAt, &cd.UpdatedAt,
+		&cd.ParentCompanyID, &cd.PriorityTier, &cd.CSRCategory, &cd.PartnerNGO, &cd.AliasKeywords, &cd.CreatedAt, &cd.UpdatedAt,
 		&cd.TargetCount, &cd.SignalCount, &cd.TotalBudget,
 	)
 	if err != nil {
@@ -132,7 +162,7 @@ func (r *CompanyRepository) FindBySlugOrAlias(ctx context.Context, slug, rawName
 		SELECT id::text, name, legal_name, slug, industry_id, industry_sector, company_type,
 		       website, linkedin_url, headquarters, employee_range, revenue_range,
 		       is_public, ticker, parent_company_id::text, COALESCE(alias_keywords, '{}'), created_at, updated_at
-		FROM companies
+		FROM company.companies
 		WHERE slug = $1 OR name ILIKE $2 OR $2 ILIKE ANY(alias_keywords)
 		LIMIT 1;
 	`
@@ -157,7 +187,7 @@ func (r *CompanyRepository) CreateCompany(ctx context.Context, c model.Company) 
 	}
 
 	query := `
-		INSERT INTO companies (
+		INSERT INTO company.companies (
 			name, legal_name, slug, industry_sector, company_type, alias_keywords, created_at, updated_at
 		) VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
 		ON CONFLICT (slug) DO UPDATE SET updated_at = NOW()
@@ -184,4 +214,62 @@ func (r *CompanyRepository) CreateCompany(ctx context.Context, c model.Company) 
 
 	return &c, nil
 }
+
+// GetCompaniesMissingWebsite fetches companies where website is NULL or empty up to limit.
+func (r *CompanyRepository) GetCompaniesMissingWebsite(ctx context.Context, limit int) ([]model.Company, error) {
+	if r.pool == nil {
+		return nil, nil
+	}
+
+	query := `
+		SELECT id::text, name, legal_name, slug, industry_sector, company_type, is_public, ticker, COALESCE(alias_keywords, '{}')
+		FROM company.companies
+		WHERE website IS NULL OR website = ''
+		ORDER BY is_public DESC, name ASC
+		LIMIT $1;
+	`
+
+	rows, err := r.pool.Query(ctx, query, limit)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query missing websites: %w", err)
+	}
+	defer rows.Close()
+
+	var list []model.Company
+	for rows.Next() {
+		var c model.Company
+		if err := rows.Scan(&c.ID, &c.Name, &c.LegalName, &c.Slug, &c.IndustrySector, &c.CompanyType, &c.IsPublic, &c.Ticker, &c.AliasKeywords); err == nil {
+			list = append(list, c)
+		}
+	}
+	return list, nil
+}
+
+// UpdateCompanyWebsite updates the verified website URL and website_source in company_csr_profiles.
+func (r *CompanyRepository) UpdateCompanyWebsite(ctx context.Context, companyID string, website string) error {
+	if r.pool == nil {
+		return nil
+	}
+
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to start tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	_, err = tx.Exec(ctx, `UPDATE company.companies SET website = $1, updated_at = NOW() WHERE id = $2::uuid`, website, companyID)
+	if err != nil {
+		return fmt.Errorf("failed to update company website: %w", err)
+	}
+
+	csrSource := fmt.Sprintf("%s/csr", website)
+	_, _ = tx.Exec(ctx, `
+		INSERT INTO company_csr_profiles (company_id, has_csr, website_source, updated_at)
+		VALUES ($1::uuid, true, $2, NOW())
+		ON CONFLICT (company_id) DO UPDATE SET website_source = EXCLUDED.website_source, updated_at = NOW();
+	`, companyID, csrSource)
+
+	return tx.Commit(ctx)
+}
+
 

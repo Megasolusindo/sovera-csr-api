@@ -44,7 +44,7 @@ services:
     environment:
       - PORT=4000
       - NODE_ENV=development
-      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/sovera_db?sslmode=disable
+      - DATABASE_URL=${DATABASE_URL:-postgres://postgres:ResulteW212%23@10.10.29.177:5432/sovera?sslmode=disable}
       - REDIS_URL=redis:6379
       - WEBHOOK_SECRET_KEY=super_secret_crawler_key_123
       - JWT_SECRET=super_secret_jwt_key_enterprise
@@ -66,7 +66,7 @@ services:
     restart: always
     environment:
       - NODE_ENV=development
-      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/sovera_db?sslmode=disable
+      - DATABASE_URL=${DATABASE_URL:-postgres://postgres:ResulteW212%23@10.10.29.177:5432/sovera?sslmode=disable}
       - REDIS_URL=redis:6379
       - WEBHOOK_SECRET_KEY=super_secret_crawler_key_123
       - JWT_SECRET=super_secret_jwt_key_enterprise

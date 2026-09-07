@@ -12,6 +12,7 @@ type CompanyCSRProgram struct {
 	EndDate       *time.Time `json:"end_date,omitempty"`
 	Status        string     `json:"status"`
 	BudgetAmount  *float64   `json:"budget_amount,omitempty"`
+	PartnerNGO    *string    `json:"partner_ngo,omitempty"`
 	ImpactSummary *string    `json:"impact_summary,omitempty"`
 	CreatedAt     time.Time  `json:"created_at"`
 	UpdatedAt     time.Time  `json:"updated_at"`

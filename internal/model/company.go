@@ -18,6 +18,9 @@ type Company struct {
 	IsPublic        bool      `json:"is_public"`
 	Ticker          *string   `json:"ticker,omitempty"`
 	ParentCompanyID *string   `json:"parent_company_id,omitempty"`
+	PriorityTier    string    `json:"priority_tier"`
+	CSRCategory     string    `json:"csr_category"`
+	PartnerNGO      *string   `json:"partner_ngo,omitempty"`
 	AliasKeywords   []string  `json:"alias_keywords"`
 	CreatedAt       time.Time `json:"created_at"`
 	UpdatedAt       time.Time `json:"updated_at"`

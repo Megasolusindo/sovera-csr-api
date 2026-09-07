@@ -2,15 +2,18 @@
 
 **Product:** Sovera (FundIQ) Core API  
 **Base URL:** `https://api.sovera.id/api/v1` (Production) / `http://localhost:4000/api/v1` (Local)  
-**Authentication:** Bearer Token (`JWT`) / Pre-Shared HMAC Signature (`X-Hub-Signature-256`)  
+**Authentication:** Bearer Token (`JWT`) / Multi-Layer Webhook Verification (`X-Hub-Signature-256`, `X-Webhook-Secret`, Bearer, Query Param)  
 
 ---
 
 ## 1. Authentication & Security Headers
 
 ### 1.1 Ingestion Webhook (Crawler to Backend)
-* **Header:** `X-Hub-Signature-256: sha256=<hmac_hex_digest>`
-* **Signature Generation:** `HMAC_SHA256(request_body_raw_string, WEBHOOK_SECRET_KEY)`
+Backend mendukung verifikasi otentikasi webhook bertingkat (*multi-layer verification*):
+1. **HMAC SHA-256 Signature:** `X-Hub-Signature-256: sha256=<hmac_hex_digest>` (`HMAC_SHA256(raw_body, WEBHOOK_SECRET_KEY)`)
+2. **Direct Secret Header:** `X-Webhook-Secret: <WEBHOOK_SECRET_KEY>`
+3. **Authorization Bearer:** `Authorization: Bearer <WEBHOOK_SECRET_KEY>`
+4. **Query Parameter Token:** `?secret=<WEBHOOK_SECRET_KEY>` atau `?token=<WEBHOOK_SECRET_KEY>`
 
 ### 1.2 Frontend / Client Requests
 * **Header:** `Authorization: Bearer <jwt_token>`
@@ -23,8 +26,7 @@
     "role": "FUNDRAISER",
     "exp": 1788192000
   }
-
-```
+  ```
 
 ---
 
@@ -32,14 +34,14 @@
 
 ### `POST /webhooks/crawler`
 
-Menerima hasil scraping mentah dari crawler service dan memasukkannya ke antrean Asynq (Redis Task Queue).
+Menerima hasil pemindaian mentah dari WebScraper Service (`PDF_DOCUMENT`, `NEWS_ARTICLE`, `CSR_OPPORTUNITY_SEARCH`, `COMPANY_ENRICHMENT`, `SEARCH_DISCOVERY`) dan memasukkannya ke antrean Asynq Redis.
 
 #### Headers
 
 * `Content-Type: application/json`
-* `X-Hub-Signature-256: sha256=d5b9...`
+* `X-Hub-Signature-256: sha256=d5b9...` (atau `X-Webhook-Secret` / Bearer token)
 
-#### Request Body
+#### Request Body (Contoh Laporan PDF / News)
 
 ```json
 {
@@ -48,7 +50,7 @@ Menerima hasil scraping mentah dari crawler service dan memasukkannya ke antrean
   "status": "COMPLETED",
   "http_status_code": 200,
   "error_message": "",
-  "source_type": "BEI_REPORT",
+  "source_type": "PDF_DOCUMENT",
   "source_url": "https://idx.co.id/reports/emiten_csr_2025.pdf",
   "author_or_account": "PT Maju Bersama Tbk",
   "published_date": "2026-08-30",
@@ -60,25 +62,32 @@ Menerima hasil scraping mentah dari crawler service dan memasukkannya ke antrean
 
 #### Responses
 
-* `202 Accepted`
+* `202 Accepted` (Payload sukses diterima & di-queue ke Redis Asynq Worker)
 ```json
 {
   "success": true,
-  "message": "Payload queued for processing",
-  "job_id": "job_ingest_88291"
+  "message": "Payload queued for background ingestion & LLM extraction",
+  "job_id": "job_ingest_88291",
+  "content_hash": "ff67a9d764d6a2367a187734e697f6a53217db9a21c101d410a113ca871a299d"
 }
-
 ```
 
+* `200 OK` (Untuk callback berstatus `FAILED`, sistem mencatat error & memperbarui Circuit Breaker)
+```json
+{
+  "success": true,
+  "message": "Scraper failure recorded and target health updated",
+  "status": "FAILED"
+}
+```
 
 * `401 Unauthorized`
 ```json
 {
   "success": false,
-  "error": "INVALID_SIGNATURE",
-  "message": "HMAC signature verification failed"
+  "error": "UNAUTHORIZED_WEBHOOK",
+  "message": "Webhook authentication failed"
 }
-
 ```
 
 

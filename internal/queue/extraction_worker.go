@@ -73,7 +73,7 @@ func (w *ExtractionWorker) ProcessExtractionTask(ctx context.Context, task *asyn
 	}
 
 	// 3. Automated ESG Extraction if report or ESG keywords detected
-	if w.esgExtractor != nil && (payload.SourceType == "BEI_REPORT" || payload.SourceType == "PDF_REPORTS" || payload.SourceType == "PDF_DOCUMENT" || strings.Contains(strings.ToUpper(textToExtract), "ESG") || strings.Contains(strings.ToLower(textToExtract), "keberlanjutan")) {
+	if w.esgExtractor != nil && (payload.SourceType == "BEI_REPORT" || payload.SourceType == "PDF_REPORTS" || payload.SourceType == "PDF_DOCUMENT" || payload.SourceType == "COMPANY_ENRICHMENT" || payload.SourceType == "CSR_OPPORTUNITY_SEARCH" || strings.Contains(strings.ToUpper(textToExtract), "ESG") || strings.Contains(strings.ToLower(textToExtract), "keberlanjutan")) {
 		log.Printf("[Asynq Worker] Triggering ESG Profile Extractor for company [%s]...", extractedSignal.CompanyName)
 		esgProfile, esgErr := w.esgExtractor.ProcessESGExtraction(
 			ctx,

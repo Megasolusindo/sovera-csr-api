@@ -30,7 +30,7 @@ Sovera (FundIQ) is an enterprise B2B fundraising intelligence and deal-preparati
 - `internal/handler/`: Fiber HTTP route handlers (Controllers)
 - `internal/middleware/`: JWT authentication and HMAC webhook validators
 - `internal/repository/`: `pgx` connection pool, SQL queries, and RLS context wrappers (`WithTenantContext`)
-- `internal/queue/`: Asynq task payloads and worker handlers (`ingestion`, `extraction`, `proposal`)
+- `internal/queue/`: Asynq task payloads and worker handlers (`dispatch`, `poll_pending`, `extraction`, `esg`, `proposal`)
 - `internal/service/ai/`: LLM prompt templates, structured parsers, and embedding generators
 - `internal/service/matcher/`: Cosine similarity vector search functions
 - `internal/service/exporter/`: PDF & DOCX document generator

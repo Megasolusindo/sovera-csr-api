@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"sovera-core-api/internal/config"
@@ -26,7 +27,54 @@ func NewDispatcher(cfg *config.Config) *Dispatcher {
 	}
 }
 
-// DispatchTask sends a scrape task request to Scraper Service
+func (d *Dispatcher) getEndpointURL(endpointPath string) string {
+	rawURL := d.cfg.ScraperServiceURL
+	if rawURL == "" {
+		return ""
+	}
+	if strings.HasSuffix(rawURL, "/api/v1/scrape-tasks") {
+		return strings.TrimSuffix(rawURL, "/api/v1/scrape-tasks") + endpointPath
+	}
+	if strings.HasSuffix(rawURL, "/scrape-tasks") {
+		return strings.TrimSuffix(rawURL, "/scrape-tasks") + endpointPath
+	}
+	return strings.TrimRight(rawURL, "/") + endpointPath
+}
+
+func (d *Dispatcher) sendRequest(ctx context.Context, method, targetURL string, payload interface{}) (*http.Response, error) {
+	var bodyReader *bytes.Buffer
+	if payload != nil {
+		bodyBytes, err := json.Marshal(payload)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal payload: %w", err)
+		}
+		bodyReader = bytes.NewBuffer(bodyBytes)
+	} else {
+		bodyReader = bytes.NewBuffer(nil)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, method, targetURL, bodyReader)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create http request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	apiKey := d.cfg.ScraperAPIKey
+	if apiKey == "" {
+		apiKey = d.cfg.WebhookSecretKey
+	}
+	if apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+	}
+
+	resp, err := d.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute http request: %w", err)
+	}
+
+	return resp, nil
+}
+
+// DispatchTask sends a scrape task request to Scraper Service (POST /api/v1/scrape-tasks)
 func (d *Dispatcher) DispatchTask(ctx context.Context, target model.CrawlingTarget, taskID string) (int, error) {
 	if d.cfg.ScraperServiceURL == "" {
 		return 0, fmt.Errorf("SCRAPER_SERVICE_URL is not configured")
@@ -52,27 +100,9 @@ func (d *Dispatcher) DispatchTask(ctx context.Context, target model.CrawlingTarg
 		},
 	}
 
-	bodyBytes, err := json.Marshal(payload)
+	resp, err := d.sendRequest(ctx, http.MethodPost, d.cfg.ScraperServiceURL, payload)
 	if err != nil {
-		return 0, fmt.Errorf("failed to marshal payload: %w", err)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, d.cfg.ScraperServiceURL, bytes.NewBuffer(bodyBytes))
-	if err != nil {
-		return 0, fmt.Errorf("failed to create http request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	apiKey := d.cfg.ScraperAPIKey
-	if apiKey == "" {
-		apiKey = d.cfg.WebhookSecretKey
-	}
-	if apiKey != "" {
-		req.Header.Set("Authorization", "Bearer "+apiKey)
-	}
-
-	resp, err := d.httpClient.Do(req)
-	if err != nil {
-		return 0, fmt.Errorf("failed to execute http post to scraper service: %w", err)
+		return 0, err
 	}
 	defer resp.Body.Close()
 
@@ -83,13 +113,149 @@ func (d *Dispatcher) DispatchTask(ctx context.Context, target model.CrawlingTarg
 	return resp.StatusCode, nil
 }
 
+// DispatchDiscovery sends a search & discovery task request (POST /api/v1/discovery)
+func (d *Dispatcher) DispatchDiscovery(ctx context.Context, payload model.DiscoveryTaskPayload) (int, error) {
+	endpoint := d.getEndpointURL("/api/v1/discovery")
+	if endpoint == "" {
+		return 0, fmt.Errorf("SCRAPER_SERVICE_URL is not configured")
+	}
+
+	if payload.ClientOrigin == "" {
+		payload.ClientOrigin = "sovera_b2b_engine"
+	}
+	if payload.CallbackURL == "" {
+		cb := d.cfg.WebhookURL
+		if idx := strings.Index(cb, "?"); idx != -1 {
+			cb = cb[:idx]
+		}
+		if cb == "" {
+			cb = "http://localhost:4000/api/v1/webhooks/crawler"
+		}
+		payload.CallbackURL = cb
+	}
+
+	resp, err := d.sendRequest(ctx, http.MethodPost, endpoint, payload)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted {
+		return resp.StatusCode, fmt.Errorf("scraper service discovery returned status %d", resp.StatusCode)
+	}
+
+	return resp.StatusCode, nil
+}
+
+// DispatchCrawlJob sends a recursive crawl job request (POST /api/v1/crawl-jobs)
+func (d *Dispatcher) DispatchCrawlJob(ctx context.Context, payload model.CrawlJobPayload) (int, error) {
+	endpoint := d.getEndpointURL("/api/v1/crawl-jobs")
+	if endpoint == "" {
+		return 0, fmt.Errorf("SCRAPER_SERVICE_URL is not configured")
+	}
+
+	if payload.ClientOrigin == "" {
+		payload.ClientOrigin = "sovera_b2b_engine"
+	}
+	if payload.CallbackURL == "" {
+		payload.CallbackURL = d.cfg.WebhookURL
+	}
+
+	resp, err := d.sendRequest(ctx, http.MethodPost, endpoint, payload)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted {
+		return resp.StatusCode, fmt.Errorf("scraper service crawl-job returned status %d", resp.StatusCode)
+	}
+
+	return resp.StatusCode, nil
+}
+
+// InspectBatch checks page hashes synchronously via POST /api/v1/inspect-batch
+func (d *Dispatcher) InspectBatch(ctx context.Context, payload model.InspectBatchPayload) (*model.InspectBatchResponse, int, error) {
+	endpoint := d.getEndpointURL("/api/v1/inspect-batch")
+	if endpoint == "" {
+		return nil, 0, fmt.Errorf("SCRAPER_SERVICE_URL is not configured")
+	}
+
+	resp, err := d.sendRequest(ctx, http.MethodPost, endpoint, payload)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, resp.StatusCode, fmt.Errorf("scraper service inspect-batch returned status %d", resp.StatusCode)
+	}
+
+	var result model.InspectBatchResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, resp.StatusCode, fmt.Errorf("failed to decode inspect-batch response: %w", err)
+	}
+
+	return &result, resp.StatusCode, nil
+}
+
+// InspectDocument checks document metadata & ETag synchronously via POST /api/v1/documents/inspect
+func (d *Dispatcher) InspectDocument(ctx context.Context, payload model.DocumentInspectPayload) (*model.DocumentInspectResponse, int, error) {
+	endpoint := d.getEndpointURL("/api/v1/documents/inspect")
+	if endpoint == "" {
+		return nil, 0, fmt.Errorf("SCRAPER_SERVICE_URL is not configured")
+	}
+
+	resp, err := d.sendRequest(ctx, http.MethodPost, endpoint, payload)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, resp.StatusCode, fmt.Errorf("scraper service documents/inspect returned status %d", resp.StatusCode)
+	}
+
+	var result model.DocumentInspectResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, resp.StatusCode, fmt.Errorf("failed to decode documents/inspect response: %w", err)
+	}
+
+	return &result, resp.StatusCode, nil
+}
+
+// GetTaskStatus queries task status from Scraper Service (GET /api/v1/tasks/{task_id})
+func (d *Dispatcher) GetTaskStatus(ctx context.Context, taskID string) (*model.TaskStatusResponse, int, error) {
+	endpoint := d.getEndpointURL(fmt.Sprintf("/api/v1/tasks/%s", taskID))
+	if endpoint == "" {
+		return nil, 0, fmt.Errorf("SCRAPER_SERVICE_URL is not configured")
+	}
+
+	resp, err := d.sendRequest(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, resp.StatusCode, fmt.Errorf("scraper service get task status returned status %d", resp.StatusCode)
+	}
+
+	var result model.TaskStatusResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, resp.StatusCode, fmt.Errorf("failed to decode task status response: %w", err)
+	}
+
+	return &result, resp.StatusCode, nil
+}
+
 func mapSourceType(st string) string {
 	switch st {
 	case "IDX_ANNOUNCEMENT", "CORPORATE_NEWSROOM":
 		return "NEWS_ARTICLE"
 	case "PDF_REPORTS":
 		return "PDF_DOCUMENT"
-	case "PDF_DOCUMENT", "NEWS_ARTICLE", "NEWS_RSS", "BUMN_PORTAL", "GRANTS_PORTAL", "RAW_WEB", "SOCIAL_POST":
+	case "PDF_DOCUMENT", "NEWS_ARTICLE", "NEWS_RSS", "BUMN_PORTAL", "GRANTS_PORTAL", "RAW_WEB", "SOCIAL_POST", "CSR_OPPORTUNITY_SEARCH", "COMPANY_ENRICHMENT", "SEARCH_DISCOVERY":
 		return st
 	default:
 		return "NEWS_ARTICLE"

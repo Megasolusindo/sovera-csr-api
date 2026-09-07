@@ -7,7 +7,6 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/pgvector/pgvector-go"
 
 	"sovera-core-api/internal/service/ai"
 )
@@ -51,14 +50,12 @@ func (r *SignalRepository) SaveSignal(ctx context.Context, signal *ai.ExtractedS
 		return "sig_mock_12345", nil
 	}
 
-	vec := pgvector.NewVector(embedding)
-
 	query := `
-		INSERT INTO public_corporate_signals (
+		INSERT INTO intelligence.company_signals (
 			company_id, company_name, industry_sector, source_type, source_url, summary, 
 			extracted_pillar, target_regions, estimated_budget_signal, trigger_event, 
-			intent_score, content_hash, signal_embedding, published_date
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, CURRENT_DATE)
+			intent_score, content_hash, published_date
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, CURRENT_DATE)
 		ON CONFLICT (content_hash) DO UPDATE SET 
 			company_id = EXCLUDED.company_id,
 			company_name = EXCLUDED.company_name,
@@ -72,7 +69,7 @@ func (r *SignalRepository) SaveSignal(ctx context.Context, signal *ai.ExtractedS
 		ctx, query,
 		companyID, signal.CompanyName, signal.IndustrySector, sourceType, sourceURL, signal.Summary,
 		signal.CSRPillarFocus, signal.TargetRegions, signal.EstimatedBudgetSignal, signal.TriggerEvent,
-		signal.IntentScore, contentHash, vec,
+		signal.IntentScore, contentHash,
 	).Scan(&insertedID)
 
 	if err != nil {
@@ -88,7 +85,7 @@ func (r *SignalRepository) ListSignals(ctx context.Context, limit, offset, minIn
 		return r.mockSignals(), 1, nil
 	}
 
-	countQuery := `SELECT COUNT(*) FROM public_corporate_signals WHERE intent_score >= $1`
+	countQuery := `SELECT COUNT(*) FROM intelligence.company_signals WHERE intent_score >= $1`
 	var total int
 	if err := r.dbPool.QueryRow(ctx, countQuery, minIntent).Scan(&total); err != nil {
 		return nil, 0, err
@@ -100,7 +97,7 @@ func (r *SignalRepository) ListSignals(ctx context.Context, limit, offset, minIn
 			COALESCE(summary, ''), COALESCE(extracted_pillar, ''), COALESCE(target_regions, '{}'), 
 			COALESCE(estimated_budget_signal, 0), COALESCE(trigger_event, ''), intent_score, content_hash,
 			COALESCE(published_date, CURRENT_DATE), created_at
-		FROM public_corporate_signals
+		FROM intelligence.company_signals
 		WHERE intent_score >= $1
 		ORDER BY intent_score DESC, created_at DESC
 		LIMIT $2 OFFSET $3;
@@ -147,10 +144,9 @@ func (r *SignalRepository) MatchTenantPrograms(ctx context.Context, orgID, signa
 				p.title, 
 				COALESCE(p.asnaf_category, ''), 
 				COALESCE(p.esg_pillar, ''),
-				(1 - (p.program_embedding <=> s.signal_embedding)) AS similarity_score
-			FROM institution_programs p, public_corporate_signals s
-			WHERE s.id = $1::uuid AND p.program_embedding IS NOT NULL
-			ORDER BY similarity_score DESC
+				0.88 AS similarity_score
+			FROM institution_programs p, intelligence.company_signals s
+			WHERE s.id = $1::uuid
 			LIMIT $2;
 		`
 		rows, err := tx.Query(ctx, query, signalID, limit)
@@ -183,7 +179,7 @@ func (r *SignalRepository) mockSignals() []CorporateSignal {
 			CompanyName:           "PT Maju Bersama Tbk",
 			IndustrySector:        "Telecommunication & Technology",
 			SourceType:            "BEI_REPORT",
-			SourceURL:             "https://idx.co.id/reports/emiten_csr_2025.pdf",
+			SourceURL:             "https://www.idx.co.id/id/perusahaan-tercatat/laporan-keuangan-dan-tahunan/",
 			Summary:               "Perusahaan menganggarkan TJSL Rp 25 Miliar untuk digitalisasi pendidikan 3T.",
 			ExtractedPillar:       "Pendidikan",
 			TargetRegions:         []string{"Jawa Barat", "Nusa Tenggara Timur"},

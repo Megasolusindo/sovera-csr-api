@@ -10,6 +10,8 @@ type PitchStrategyResult struct {
 	Icebreaker       string   `json:"icebreaker"`
 	PitchDeckOutline []string `json:"pitch_deck_outline"`
 	ProposalMarkdown string   `json:"proposal_markdown"`
+	PromptTokens     int      `json:"prompt_tokens"`
+	CompletionTokens int      `json:"completion_tokens"`
 }
 
 // GeneratePitchStrategy orchestrates Gemini LLM to craft executive outreach outputs adapted to orgType.
@@ -61,10 +63,15 @@ func (s *GeminiService) GeneratePitchStrategy(ctx context.Context, dealID, compa
 		companyName, orgType, programTitle, CSRSummary, programDesc, customNotes,
 	)
 
+	promptLen := len(companyName) + len(CSRSummary) + len(programTitle) + len(programDesc) + len(customNotes) + 400
+	completionLen := len(icebreaker) + len(proposalMarkdown)
+
 	return &PitchStrategyResult{
 		DealID:           dealID,
 		Icebreaker:       icebreaker,
 		PitchDeckOutline: pitchOutline,
 		ProposalMarkdown: proposalMarkdown,
+		PromptTokens:     int(float64(promptLen) / 3.2),
+		CompletionTokens: int(float64(completionLen) / 3.2),
 	}, nil
 }

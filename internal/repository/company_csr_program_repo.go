@@ -26,7 +26,7 @@ func (r *CompanyCSRProgramRepository) ListByCompanyID(ctx context.Context, compa
 	query := `
 		SELECT 
 			id::text, company_id::text, name, description, program_type,
-			start_date, end_date, status, budget_amount, impact_summary,
+			start_date, end_date, status, budget_amount, partner_ngo, impact_summary,
 			created_at, updated_at
 		FROM company_csr_programs
 		WHERE company_id::text = $1
@@ -44,7 +44,7 @@ func (r *CompanyCSRProgramRepository) ListByCompanyID(ctx context.Context, compa
 		var p model.CompanyCSRProgram
 		err := rows.Scan(
 			&p.ID, &p.CompanyID, &p.Name, &p.Description, &p.ProgramType,
-			&p.StartDate, &p.EndDate, &p.Status, &p.BudgetAmount, &p.ImpactSummary,
+			&p.StartDate, &p.EndDate, &p.Status, &p.BudgetAmount, &p.PartnerNGO, &p.ImpactSummary,
 			&p.CreatedAt, &p.UpdatedAt,
 		)
 		if err != nil {
@@ -72,7 +72,7 @@ func (r *CompanyCSRProgramRepository) GetByID(ctx context.Context, id string) (*
 	query := `
 		SELECT 
 			id::text, company_id::text, name, description, program_type,
-			start_date, end_date, status, budget_amount, impact_summary,
+			start_date, end_date, status, budget_amount, partner_ngo, impact_summary,
 			created_at, updated_at
 		FROM company_csr_programs
 		WHERE id::text = $1
@@ -82,7 +82,7 @@ func (r *CompanyCSRProgramRepository) GetByID(ctx context.Context, id string) (*
 	var p model.CompanyCSRProgram
 	err := r.pool.QueryRow(ctx, query, id).Scan(
 		&p.ID, &p.CompanyID, &p.Name, &p.Description, &p.ProgramType,
-		&p.StartDate, &p.EndDate, &p.Status, &p.BudgetAmount, &p.ImpactSummary,
+		&p.StartDate, &p.EndDate, &p.Status, &p.BudgetAmount, &p.PartnerNGO, &p.ImpactSummary,
 		&p.CreatedAt, &p.UpdatedAt,
 	)
 	if err != nil {
@@ -112,24 +112,24 @@ func (r *CompanyCSRProgramRepository) Create(ctx context.Context, p *model.Compa
 	query := `
 		INSERT INTO company_csr_programs (
 			company_id, name, description, program_type,
-			start_date, end_date, status, budget_amount, impact_summary,
+			start_date, end_date, status, budget_amount, partner_ngo, impact_summary,
 			created_at, updated_at
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, COALESCE(NULLIF($7, ''), 'ACTIVE'), $8, $9, NOW(), NOW()
+			$1, $2, $3, $4, $5, $6, COALESCE(NULLIF($7, ''), 'ACTIVE'), $8, $9, $10, NOW(), NOW()
 		)
 		RETURNING 
 			id::text, company_id::text, name, description, program_type,
-			start_date, end_date, status, budget_amount, impact_summary,
+			start_date, end_date, status, budget_amount, partner_ngo, impact_summary,
 			created_at, updated_at;
 	`
 
 	var created model.CompanyCSRProgram
 	err = tx.QueryRow(ctx, query,
 		p.CompanyID, p.Name, p.Description, p.ProgramType,
-		p.StartDate, p.EndDate, p.Status, p.BudgetAmount, p.ImpactSummary,
+		p.StartDate, p.EndDate, p.Status, p.BudgetAmount, p.PartnerNGO, p.ImpactSummary,
 	).Scan(
 		&created.ID, &created.CompanyID, &created.Name, &created.Description, &created.ProgramType,
-		&created.StartDate, &created.EndDate, &created.Status, &created.BudgetAmount, &created.ImpactSummary,
+		&created.StartDate, &created.EndDate, &created.Status, &created.BudgetAmount, &created.PartnerNGO, &created.ImpactSummary,
 		&created.CreatedAt, &created.UpdatedAt,
 	)
 	if err != nil {

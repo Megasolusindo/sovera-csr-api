@@ -22,6 +22,8 @@ type ExtractedSignal struct {
 	TriggerEvent          string   `json:"trigger_event"`
 	IntentScore           int      `json:"intent_score"`
 	Summary               string   `json:"summary"`
+	PartnerNGO            string   `json:"partner_ngo"`
+	CSREmailContact       string   `json:"csr_email_contact"`
 }
 
 type GeminiService struct {
@@ -44,12 +46,12 @@ func (s *GeminiService) ExtractCorporateSignal(ctx context.Context, rawText stri
 	}
 
 	prompt := fmt.Sprintf(`Extract structured CSR funding intelligence from the following corporate text into a raw JSON object with keys:
-"company_name" (string), "industry_sector" (string), "csr_pillar_focus" (string), "target_regions" (array of strings), "estimated_budget_signal" (number), "trigger_event" (string), "intent_score" (number 1-100), "summary" (string).
+"company_name" (string), "industry_sector" (string), "csr_pillar_focus" (string), "target_regions" (array of strings), "estimated_budget_signal" (number), "trigger_event" (string), "intent_score" (number 1-100), "summary" (string), "partner_ngo" (string), "csr_email_contact" (string).
 
 Text to process:
 %s`, rawText)
 
-	url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=%s", s.apiKey)
+	url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=%s", s.apiKey)
 	reqBody := map[string]interface{}{
 		"contents": []map[string]interface{}{
 			{
@@ -185,7 +187,7 @@ func (s *GeminiService) ExtractESGProfile(ctx context.Context, rawText string) (
 Text to process:
 %s`, rawText)
 
-	url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=%s", s.apiKey)
+	url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=%s", s.apiKey)
 	reqBody := map[string]interface{}{
 		"contents": []map[string]interface{}{
 			{

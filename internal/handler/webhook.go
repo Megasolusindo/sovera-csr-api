@@ -1,7 +1,9 @@
 package handler
 
 import (
+	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -50,6 +52,13 @@ type CrawlerPayloadData struct {
 	} `json:"raw_data,omitempty"`
 }
 
+type DiscoveredItem struct {
+	Title   string `json:"title"`
+	URL     string `json:"url"`
+	Snippet string `json:"snippet,omitempty"`
+	Rank    int    `json:"rank,omitempty"`
+}
+
 // CrawlerPayload represents the webhook callback payload from the web scraper service.
 type CrawlerPayload struct {
 	TaskID          string              `json:"task_id"`
@@ -66,6 +75,8 @@ type CrawlerPayload struct {
 	RawText         string              `json:"raw_text,omitempty"`
 	MarkdownContent string              `json:"markdown_content,omitempty"`
 	ExecutionTimeMs int                 `json:"execution_time_ms,omitempty"`
+	Query           string              `json:"query,omitempty"`
+	DiscoveredItems []DiscoveredItem    `json:"discovered_items,omitempty"`
 	Data            *CrawlerPayloadData `json:"data,omitempty"`
 }
 
@@ -154,7 +165,29 @@ func (h *WebhookHandler) HandleCrawlerWebhook(c *fiber.Ctx) error {
 	}
 
 	// ─── Handle Scraper Success Callback ──────────────────────────────────────
-	if payload.RawText == "" && payload.MarkdownContent == "" {
+	if (payload.SourceType == "SEARCH_DISCOVERY" || payload.SourceType == "COMPANY_ENRICHMENT") && payload.RawText == "" && len(payload.DiscoveredItems) > 0 {
+		var sb strings.Builder
+		if payload.Query != "" {
+			sb.WriteString("Search Query: " + payload.Query + "\n\n")
+		}
+		for _, item := range payload.DiscoveredItems {
+			sb.WriteString(fmt.Sprintf("[%d] %s (%s)\n%s\n\n", item.Rank, item.Title, item.URL, item.Snippet))
+		}
+		payload.RawText = sb.String()
+
+		// Auto-enrich company website if TargetID matches company ID and item rank 1 URL is valid
+		if h.dbPool != nil && len(payload.DiscoveredItems) > 0 {
+			topURL := strings.TrimSpace(payload.DiscoveredItems[0].URL)
+			if topURL != "" && (strings.HasPrefix(topURL, "http://") || strings.HasPrefix(topURL, "https://")) {
+				compRepo := repository.NewCompanyRepository(h.dbPool)
+				if payload.TargetID != "" {
+					_ = compRepo.UpdateCompanyWebsite(c.Context(), payload.TargetID, topURL)
+				}
+			}
+		}
+	}
+
+	if payload.RawText == "" && payload.MarkdownContent == "" && (payload.SourceType != "SEARCH_DISCOVERY" || len(payload.DiscoveredItems) == 0) {
 		return c.Status(fiber.StatusUnprocessableEntity).JSON(fiber.Map{
 			"success": false,
 			"error":   "EMPTY_CONTENT",

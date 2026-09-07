@@ -73,3 +73,52 @@ func (h *CrawlerDispatcherHandler) HandleDispatchCrawlingTask(ctx context.Contex
 	log.Println("Crawling dispatching cycle completed successfully.")
 	return nil
 }
+
+// HandlePollPendingTasks acts as a fallback worker querying status for tasks stuck in DISPATCHED status
+func (h *CrawlerDispatcherHandler) HandlePollPendingTasks(ctx context.Context, t *asynq.Task) error {
+	log.Println("Starting execution of fallback task status polling worker...")
+
+	// Fetch logs stuck in DISPATCHED status for more than 10 minutes
+	pendingLogs, err := h.crawlerRepo.GetPendingLogs(ctx, 10, 50)
+	if err != nil {
+		return fmt.Errorf("failed to fetch pending crawling logs: %w", err)
+	}
+
+	if len(pendingLogs) == 0 {
+		log.Println("No stuck pending tasks found. Polling cycle completed.")
+		return nil
+	}
+
+	log.Printf("Found %d pending tasks stuck in DISPATCHED status. Polling Scraper API status...", len(pendingLogs))
+
+	for _, pLog := range pendingLogs {
+		taskStatus, statusCode, err := h.dispatcher.GetTaskStatus(ctx, pLog.TaskID)
+		if err != nil {
+			log.Printf("[Poller] Could not fetch status for TaskID %s (HTTP %d): %v", pLog.TaskID, statusCode, err)
+			continue
+		}
+
+		switch taskStatus.Status {
+		case "COMPLETED":
+			log.Printf("[Poller] TaskID %s completed on scraper service. Syncing status...", pLog.TaskID)
+			execTime := taskStatus.ExecutionTimeMs
+			cHash := taskStatus.ContentHash
+			_ = h.crawlerRepo.UpdateLogStatus(ctx, pLog.TaskID, "COMPLETED", &execTime, &cHash, nil)
+			if pLog.TargetID != nil && *pLog.TargetID != "" {
+				_ = h.crawlerRepo.RecordSuccess(ctx, *pLog.TargetID, taskStatus.HTTPStatusCode)
+			}
+		case "FAILED":
+			log.Printf("[Poller] TaskID %s failed on scraper service. Syncing failure...", pLog.TaskID)
+			errMsg := "Task failed on scraper service according to status polling"
+			_ = h.crawlerRepo.UpdateLogStatus(ctx, pLog.TaskID, "FAILED", nil, nil, &errMsg)
+			if pLog.TargetID != nil && *pLog.TargetID != "" {
+				_ = h.crawlerRepo.RecordFailure(ctx, *pLog.TargetID, taskStatus.HTTPStatusCode, errMsg)
+			}
+		default:
+			log.Printf("[Poller] TaskID %s status on scraper service: %s. Keeping in queue.", pLog.TaskID, taskStatus.Status)
+		}
+	}
+
+	log.Println("Fallback task status polling cycle completed.")
+	return nil
+}

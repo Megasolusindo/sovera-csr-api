@@ -147,3 +147,32 @@ func (r *CrawlerRepository) UpdateLogStatus(ctx context.Context, taskID, status 
 	}
 	return nil
 }
+
+// GetPendingLogs retrieves dispatched logs that haven't received a callback within pendingMinutes.
+func (r *CrawlerRepository) GetPendingLogs(ctx context.Context, pendingMinutes int, limit int) ([]model.CrawlingLog, error) {
+	query := `
+		SELECT id, target_id::text, task_id, status, http_status_code, error_message, execution_time_ms, content_hash, created_at, updated_at
+		FROM crawling_logs
+		WHERE status = 'DISPATCHED' AND updated_at <= NOW() - MAKE_INTERVAL(mins => $1)
+		ORDER BY updated_at ASC
+		LIMIT $2;
+	`
+	rows, err := r.pool.Query(ctx, query, pendingMinutes, limit)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query pending crawling logs: %w", err)
+	}
+	defer rows.Close()
+
+	var logs []model.CrawlingLog
+	for rows.Next() {
+		var l model.CrawlingLog
+		err := rows.Scan(
+			&l.ID, &l.TargetID, &l.TaskID, &l.Status, &l.HTTPStatusCode, &l.ErrorMessage, &l.ExecutionTimeMs, &l.ContentHash, &l.CreatedAt, &l.UpdatedAt,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan crawling log: %w", err)
+		}
+		logs = append(logs, l)
+	}
+	return logs, nil
+}

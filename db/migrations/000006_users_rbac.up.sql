@@ -23,7 +23,11 @@ ALTER TABLE deal_pipelines
 
 CREATE INDEX IF NOT EXISTS idx_deals_pic_user ON deal_pipelines(pic_user_id);
 
--- 5. Seed default ORG_ADMIN user for LAZ Peduli Ummat (org: 77123aaa-...)
+-- 5. Seed default organization & users for LAZ Peduli Ummat (org: 77123aaa-...)
+INSERT INTO organizations (id, name, subscription_tier)
+VALUES ('77123aaa-8819-4c12-99a1-00123456789a', 'LAZ Peduli Ummat', 'PRO')
+ON CONFLICT (id) DO NOTHING;
+
 --    password: 'admin123' hashed with bcrypt cost 12
 --    Hash generated offline: $2a$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewKyDAJAVpSm8O2
 INSERT INTO users (id, org_id, email, password_hash, full_name, role, is_active)

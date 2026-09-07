@@ -326,8 +326,18 @@ CREATE INDEX IF NOT EXISTS idx_deals_stage ON deal_pipelines(deal_stage);
 | `company_esg_material_topics` | Skor materialitas topik ESG per profil perusahaan | Shared (Public) | PK: (`esg_profile_id`, `topic_id`) |
 | `public_corporate_signals` | Data intelijen CSR/ESG hasil ekstraksi crawler | Shared (Public) | PK: `id`, FK: `company_id` -> `companies.id` |
 | `crawling_targets` | Target situs web & portal berita crawling | Shared (Public) | PK: `id`, FK: `company_id` -> `companies.id` |
+| `sources` | Referensi rujukan data crawling & scraping | Shared (Public) | PK: `id` |
+| `organization_profiles` | Profil kapabilitas & kualifikasi hibah/kemitraan | Shared (Public) | PK: `id`, FK: `org_id` -> `organizations.id` |
+| `organization_focuses` | Relasi prioritas fokus CSR per organisasi/lembaga | Shared (Public) | PK: `id`, FK: `org_id`, FK: `focus_id` -> `csr_focuses.id` |
+| `organization_programs` | Portofolio program sosial/CSR milik organisasi | Shared (Public) | PK: `id`, FK: `org_id`, FK: `source_id` -> `sources.id` |
+| `organization_partnerships` | Riwayat kemitraan korporasi-lembaga CSR | Shared (Public) | PK: `id`, FK: `org_id`, FK: `company_id` -> `companies.id` |
+| `organization_signals` | Sinyal berita publisitas media per organisasi | Shared (Public) | PK: `id`, FK: `org_id`, FK: `source_id` -> `sources.id` |
+| `organization_prospects` | Funnel sales CRM prospek calon tenant | Internal CRM | PK: `id`, FK: `org_id`, FK: `assigned_to` -> `users.id` |
+| `crm_contacts` | Kontak personil pengurus organisasi | Internal CRM | PK: `id`, FK: `org_id` -> `organizations.id` |
+| `crm_activities` | Log aktivitas penjualan CRM calon tenant | Internal CRM | PK: `id`, FK: `org_id`, FK: `contact_id` -> `crm_contacts.id` |
 | `institution_programs` | Portofolio program unggulan & embedding program | **RLS Enforced** | PK: `id`, FK: `org_id` -> `organizations.id` |
 | `deal_pipelines` | Prospek, naskah proposal, dan tracking negosiasi | **RLS Enforced** | PK: `id`, FK: `org_id`, FK: `signal_id`, FK: `target_program_id` |
+
 
 ---
 

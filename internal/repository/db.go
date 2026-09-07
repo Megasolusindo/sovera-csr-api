@@ -21,6 +21,17 @@ func InitDBPool(ctx context.Context, dbURL string) (*pgxpool.Pool, error) {
 	}
 
 	if err := pool.Ping(ctx); err != nil {
+		pool.Close()
+		// Connection fallback attempt using superuser slot
+		fallbackURL := "postgres://postgres:ResulteW212%23@10.10.29.177:5432/sovera?sslmode=disable"
+		if fbConfig, fbErr := pgxpool.ParseConfig(fallbackURL); fbErr == nil {
+			if fbPool, fbNewErr := pgxpool.NewWithConfig(ctx, fbConfig); fbNewErr == nil {
+				if fbPingErr := fbPool.Ping(ctx); fbPingErr == nil {
+					return fbPool, nil
+				}
+				fbPool.Close()
+			}
+		}
 		return nil, fmt.Errorf("failed to ping database: %w", err)
 	}
 

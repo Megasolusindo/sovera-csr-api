@@ -22,6 +22,7 @@ import (
 	"sovera-core-api/internal/service/ai"
 	"sovera-core-api/internal/service/exporter"
 	"sovera-core-api/internal/service/normalizer"
+	"sovera-core-api/internal/service/storage"
 )
 
 func main() {
@@ -56,12 +57,15 @@ func main() {
 	geminiService := ai.NewGeminiService(cfg.AIAPIKey)
 	docExporter := exporter.NewDocumentExporter()
 	textNormalizer := normalizer.NewNormalizer()
+	storageService := storage.NewStorageService()
 
 	signalRepo := repository.NewSignalRepository(dbPool)
 	programRepo := repository.NewProgramRepository(dbPool)
 	dealRepo := repository.NewDealRepository(dbPool)
 	userRepo := repository.NewUserRepository(dbPool)
 	companyRepo := repository.NewCompanyRepository(dbPool)
+	templateRepo := repository.NewTemplateRepository(dbPool)
+	tokenLogRepo := repository.NewTokenLogRepository(dbPool)
 
 	// 5. Create Fiber Web Application
 	app := fiber.New(fiber.Config{
@@ -88,9 +92,10 @@ func main() {
 	webhookHandler := handler.NewWebhookHandler(dbPool, asynqClient, textNormalizer)
 	signalHandler := handler.NewSignalHandler(signalRepo)
 	programHandler := handler.NewProgramHandler(programRepo, geminiService)
-	dealHandler := handler.NewDealHandler(dealRepo, programRepo, signalRepo, geminiService, docExporter)
+	dealHandler := handler.NewDealHandler(dealRepo, programRepo, signalRepo, templateRepo, tokenLogRepo, storageService, geminiService, docExporter)
 	authHandler := handler.NewAuthHandler(userRepo, cfg.JWTSecret)
 	companyHandler := handler.NewCompanyHandler(companyRepo)
+	templateHandler := handler.NewTemplateHandler(templateRepo, tokenLogRepo, storageService)
 
 	// Root & Health check routes (public)
 	app.Get("/health", healthHandler.HealthCheck)
@@ -114,9 +119,9 @@ func main() {
 	// ─── JWT-Protected Routes ─────────────────────────────────────────────────
 	jwtGuard := middleware.AuthenticateJWT(cfg.JWTSecret)
 
-	// Companies Directory — semua role
-	apiV1.Get("/companies", jwtGuard, companyHandler.ListCompanies)
-	apiV1.Get("/companies/:id", jwtGuard, companyHandler.GetCompany)
+	// Companies Directory — semua role / public browsing
+	apiV1.Get("/companies", companyHandler.ListCompanies)
+	apiV1.Get("/companies/:id", companyHandler.GetCompany)
 
 	// Corporate Intelligence Feeds — semua role
 	apiV1.Get("/signals", jwtGuard, signalHandler.ListSignals)
@@ -135,6 +140,12 @@ func main() {
 	apiV1.Patch("/deals/:id/stage", jwtGuard, dealHandler.UpdateStage)
 	apiV1.Post("/deals/:id/generate-pitch", jwtGuard, dealHandler.GeneratePitch)
 	apiV1.Post("/deals/:id/export", jwtGuard, dealHandler.ExportProposal)
+
+	// Master Template & Token Usage Management — ORG_ADMIN & DIRECTOR only
+	apiV1.Get("/settings/templates", jwtGuard, templateHandler.GetTemplates)
+	apiV1.Post("/settings/templates/upload", jwtGuard, templateHandler.UploadTemplate)
+	apiV1.Delete("/settings/templates/:type", jwtGuard, templateHandler.ResetTemplate)
+	apiV1.Get("/settings/token-usage", jwtGuard, templateHandler.GetTokenUsage)
 
 	// 8. Graceful Shutdown Handler
 	shutdownChan := make(chan os.Signal, 1)

@@ -9,12 +9,14 @@ import (
 
 const (
 	TypeDispatchCrawling   = "task:dispatch_crawling"
+	TypePollPendingTasks   = "task:poll_pending_tasks"
 	TypeRawIngestion       = "task:raw_ingestion"
 	TypeLLMExtraction      = "task:llm_extraction"
 	TypeESGExtraction      = "task:esg_extraction"
 	TypeProposalGeneration = "task:proposal_generation"
 
 	QueueDispatchCrawling   = "dispatch-crawling-queue"
+	QueuePollPendingTasks   = "poll-pending-tasks-queue"
 	QueueRawIngestion       = "raw-ingestion-queue"
 	QueueLLMExtraction      = "llm-extraction-queue"
 	QueueESGExtraction      = "esg-extraction-queue"
@@ -44,6 +46,10 @@ type ESGExtractionPayload struct {
 
 func NewDispatchCrawlingTask() (*asynq.Task, error) {
 	return asynq.NewTask(TypeDispatchCrawling, []byte("{}"), asynq.Queue(QueueDispatchCrawling), asynq.MaxRetry(3)), nil
+}
+
+func NewPollPendingTasksTask() (*asynq.Task, error) {
+	return asynq.NewTask(TypePollPendingTasks, []byte("{}"), asynq.Queue(QueuePollPendingTasks), asynq.MaxRetry(3)), nil
 }
 
 func NewLLMExtractionTask(payload LLMExtractionPayload) (*asynq.Task, error) {

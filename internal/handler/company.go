@@ -22,8 +22,9 @@ func (h *CompanyHandler) ListCompanies(c *fiber.Ctx) error {
 	offset, _ := strconv.Atoi(c.Query("offset", "0"))
 	search := c.Query("search", "")
 	sector := c.Query("sector", "")
+	verificationStatus := c.Query("verification_status", "")
 
-	companies, total, err := h.repo.ListCompanies(c.Context(), limit, offset, search, sector)
+	companies, total, err := h.repo.ListCompanies(c.Context(), limit, offset, search, sector, verificationStatus)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"success": false,
@@ -32,6 +33,8 @@ func (h *CompanyHandler) ListCompanies(c *fiber.Ctx) error {
 		})
 	}
 
+	stats, _ := h.repo.GetCompanyStats(c.Context())
+
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
 		"data": companies,
 		"pagination": fiber.Map{
@@ -39,6 +42,7 @@ func (h *CompanyHandler) ListCompanies(c *fiber.Ctx) error {
 			"limit":  limit,
 			"offset": offset,
 		},
+		"stats": stats,
 	})
 }
 

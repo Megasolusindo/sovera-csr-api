@@ -11,6 +11,7 @@ import (
 	"sovera-core-api/internal/queue"
 	"sovera-core-api/internal/repository"
 	"sovera-core-api/internal/service/ai"
+	"sovera-core-api/internal/service/companyenricher"
 	"sovera-core-api/internal/service/crawler"
 	"sovera-core-api/internal/service/entityresolver"
 	"sovera-core-api/internal/service/esgextractor"
@@ -42,15 +43,27 @@ func main() {
 	esgExtractor := esgextractor.NewESGExtractor(geminiService, esgRepo, textNormalizer, entityResolver)
 	crawlerRepo := repository.NewCrawlerRepository(dbPool)
 	dispatcher := crawler.NewDispatcher(cfg)
+	companyEnricher := companyenricher.NewEnricherService(companyRepo, dispatcher)
 
 	extractionWorker := queue.NewExtractionWorker(geminiService, signalRepo, textNormalizer, entityResolver, esgExtractor)
 	dispatcherWorker := queue.NewCrawlerDispatcherHandler(crawlerRepo, dispatcher)
+	enrichmentWorker := queue.NewCompanyEnrichmentWorker(companyEnricher)
 
 	// 3. Asynq Scheduler for Periodic Tasks
 	scheduler := asynq.NewScheduler(
 		asynq.RedisClientOpt{Addr: cfg.RedisURL},
 		&asynq.SchedulerOpts{},
 	)
+
+	// Schedule task:enrich_missing_websites every 6 hours (cron: "0 */6 * * *")
+	enrichTask, err := queue.NewEnrichMissingWebsitesTask()
+	if err == nil {
+		if entryID, err := scheduler.Register("0 */6 * * *", enrichTask); err != nil {
+			log.Printf("Warning: Could not register company website enrichment cron: %v", err)
+		} else {
+			log.Printf("Registered company website enrichment cron with entry ID: %s", entryID)
+		}
+	}
 
 	// Schedule task:dispatch_crawling
 	dispatchTask, err := queue.NewDispatchCrawlingTask()
@@ -72,6 +85,16 @@ func main() {
 		}
 	}
 
+	// Schedule task:poll_pending_tasks every 15 minutes
+	pollTask, err := queue.NewPollPendingTasksTask()
+	if err == nil {
+		if entryID, err := scheduler.Register("*/15 * * * *", pollTask); err != nil {
+			log.Printf("Warning: Could not register fallback polling cron: %v", err)
+		} else {
+			log.Printf("Registered fallback task polling cron with entry ID: %s", entryID)
+		}
+	}
+
 	go func() {
 		if err := scheduler.Run(); err != nil {
 			log.Printf("Scheduler error: %v", err)
@@ -85,6 +108,8 @@ func main() {
 			Concurrency: 10,
 			Queues: map[string]int{
 				queue.QueueDispatchCrawling:   10,
+				queue.QueuePollPendingTasks:   5,
+				queue.QueueEnrichMissingWebsites: 5,
 				queue.QueueRawIngestion:       10,
 				queue.QueueLLMExtraction:      5,
 				queue.QueueESGExtraction:      5,
@@ -97,6 +122,8 @@ func main() {
 
 	// Register Asynq task handlers
 	mux.HandleFunc(queue.TypeDispatchCrawling, dispatcherWorker.HandleDispatchCrawlingTask)
+	mux.HandleFunc(queue.TypePollPendingTasks, dispatcherWorker.HandlePollPendingTasks)
+	mux.HandleFunc(queue.TypeEnrichMissingWebsites, enrichmentWorker.HandleEnrichMissingWebsites)
 	mux.HandleFunc(queue.TypeLLMExtraction, extractionWorker.ProcessExtractionTask)
 	mux.HandleFunc(queue.TypeESGExtraction, extractionWorker.ProcessESGTask)
 
