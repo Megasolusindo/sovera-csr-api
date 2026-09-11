@@ -203,3 +203,57 @@ sovera-core-api/
 ├── go.mod
 └── go.sum
 ```
+
+---
+
+## 6. Sequence Diagram & Call Flows
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Cron as Asynq Scheduler / Cron
+    participant DB as PostgreSQL Database
+    participant Disp as Crawler Dispatcher Worker
+    participant DAS as WebScraper Service (DAS)
+    participant WH as Webhook Handler (Core API)
+    participant Queue as Redis (Asynq Queue)
+    participant AI as Extraction Worker (Gemini LLM)
+
+    rect rgb(240, 248, 255)
+    note over Cron, DAS: TAHAP 1: Task Dispatching (Periodic Scheduling)
+    Cron->>Disp: Tick Trigger (task:dispatch_crawling)
+    Disp->>DB: GetDueTargets(limit=50)
+    DB-->>Disp: Return list of CrawlingTarget due for scrape
+    loop Setiap Target (Round-Robin Interleaved & 3s Delay)
+        Disp->>DB: CreateLog(task_id, status='DISPATCHED')
+        Disp->>DAS: POST /api/v1/scrape-tasks (Bearer Token + Target Config)
+        DAS-->>Disp: HTTP 202 Accepted {"task_id": "...", "status": "ACCEPTED"}
+        Disp->>DB: UpdateTargetNextRun(target_id, check_interval_hours)
+    end
+    end
+
+    rect rgb(245, 245, 220)
+    note over DAS, WH: TAHAP 2: Pemrosesan Scraper & Delivery Webhook Callback
+    DAS->>WH: POST /api/v1/webhooks/crawler (Header: X-Hub-Signature-256)
+    WH->>WH: Verify HMAC SHA-256 Signature
+    alt Callback Status FAILED / HTTP 429
+        WH->>DB: UpdateLogStatus(task_id, status='FAILED')
+        WH->>DB: RecordFailure(target_id) [Progressive Backoff: 30m/2h/6h/24h]
+        WH-->>DAS: HTTP 200 OK
+    else Callback Status COMPLETED
+        WH->>WH: SelectBestContent & GenerateContentHash (SHA-256)
+        WH->>DB: UpdateLogStatus(task_id, status='COMPLETED')
+        WH->>DB: RecordSuccess(target_id)
+        WH->>Queue: Enqueue task:llm_extraction
+        WH-->>DAS: HTTP 202 Accepted
+    end
+    end
+
+    rect rgb(240, 255, 240)
+    note over Queue, AI: TAHAP 3: Asynchronous LLM Signal & ESG Processing
+    Queue->>AI: Dequeue task:llm_extraction
+    AI->>AI: Gemini LLM Signal Extraction & Entity Resolution
+    AI->>AI: GenerateEmbedding (text-embedding-004, 1536-dim)
+    AI->>DB: SaveSignal (Persist corporate signal + vector embedding)
+    end
+```

@@ -2,20 +2,20 @@
 
 ## Identity & Guardrails
 - You are an expert Enterprise Backend & AI Systems Engineer working on Sovera (FundIQ).
-- Write clean, modular TypeScript for Fastify and PostgreSQL.
-- Prioritize database security, type safety, and efficient background processing.
+- Write clean, modular Go 1.22+ code using Go-Fiber (`gofiber/fiber`), `pgx/v5`, and PostgreSQL 16+ with `pgvector`.
+- Prioritize database security, type safety, and efficient background queue processing.
 
-## Security & Database Isolation Guidelines
+## Security & System Isolation Guidelines
 1. **Enforce Row-Level Security (RLS):**
    - Tables with RLS: `institution_programs`, `deal_pipelines`.
    - Every database transaction interacting with isolated tables MUST execute:
      ```sql
      SET LOCAL app.current_org_id = 'tenant-uuid-here';
      ```
-   - Never write tenant isolation logic solely in application code (`WHERE org_id = ...`) without verifying the RLS transaction context wrapper.
+   - Never write tenant isolation logic solely in application code (`WHERE org_id = ...`) without verifying the RLS transaction context wrapper (`WithTenantContext`).
 
 2. **Vector Search Optimization:**
-   - Vector dimension is strictly 1536.
+   - Vector dimension is strictly 1536 (`text-embedding-004`).
    - Use cosine distance operator `<=>` with HNSW indexes:
      ```sql
      SELECT id, title, (1 - (program_embedding <=> :target_embedding)) AS similarity_score
@@ -27,7 +27,10 @@
 3. **HMAC Webhook Validation:**
    - Ingestion payloads from crawler services must pass HMAC SHA-256 header validation (`X-Hub-Signature-256`) against `process.env.WEBHOOK_SECRET_KEY`.
 
-4. **Error Handling & Response Format:**
+4. **Anti-429 Rate Limiting & Cooldown:**
+   - Enforce per-host inter-request delay (min 3s) and progressive backoff (`NOW() + INTERVAL '30m/2h/6h/24h'`) for rate-limited crawling targets.
+
+5. **Error Handling & Response Format:**
    - Always return standardized JSON responses:
      - Success: `{ "success": true, "data": ... }`
      - Error: `{ "success": false, "error": "ERROR_CODE", "message": "Human readable message" }`

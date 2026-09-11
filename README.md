@@ -28,10 +28,15 @@ Platform ini mengusung **Enterprise Multi-Tenancy** dengan proteksi isolasi data
 ```text
 sovera-core-api/
 ├── docs/
-│   ├── PRD.md                  # Product Requirements & Roadmap
-│   ├── ARCHITECTURE.md         # System Blueprint & Component Flow
-│   ├── DATABASE_SCHEMA.md      # DDL, Indexes & RLS Policy Guide
-│   └── API_SPEC.md             # REST API & Webhook Specifications
+│   ├── PRD.md                       # Product Requirements & Universal NGO Expansion
+│   ├── ARCHITECTURE.md              # System Architecture & Sequence Diagrams
+│   ├── DATABASE_SCHEMA.md           # DDL, Indexes & RLS Policy Guide
+│   ├── API_SPEC.md                  # Core Backend REST API & Webhook Specifications
+│   ├── SCRAPER_API_SPEC.md          # Scraper Engine API & Ingestion Contract
+│   ├── CRAWLER_ORCHESTRATION_SPEC.md# Crawler Dispatcher, Circuit Breaker & Operations Guide
+│   ├── FEED_STRATEGY_SPEC.md        # Source Catalog, Taxonomy, Search Infrastructure & Quality Roadmap
+│   ├── INTENT_SCORE_SPEC.md         # CSR Intent Scoring & Proposal Matcher Calculation Spec
+│   └── RBAC_SPEC.md                 # Role-Based Access Control & Multi-Tenant Security Spec
 ├── cmd/
 │   ├── api/
 │   │   └── main.go             # Fiber REST API server entry point

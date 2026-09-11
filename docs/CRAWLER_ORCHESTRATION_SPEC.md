@@ -160,3 +160,39 @@ Untuk setiap target yang siap dieksekusi, Backend menyusun payload HTTP POST ke 
 3. **Duplicate Content Protection:**
    Nilai `content_hash` diverifikasi untuk mencegah pemrosesan ulang LLM yang tidak perlu.
 
+---
+
+## 7. Panduan Pemicuan Manual (Manual Triggering & Operations Guide)
+
+### 7.1 Pemicuan Worker Enrichment Korporasi
+```bash
+# Via CLI Tool
+cd /Users/mluludk/Works/sovera-csr-api
+go run cmd/tools/enrich_companies/main.go
+```
+
+### 7.2 Pemicuan Scraping Jobs Batch
+```bash
+# Trigger via API Admin Endpoint (Port 4000)
+curl -X POST http://localhost:4000/api/v1/scraping-jobs/trigger \
+  -H "Authorization: Bearer super_secret_jwt_key_enterprise" \
+  -H "Content-Type: application/json"
+```
+
+### 7.3 Pemicuan Worker Health Check & Reproses LLM
+```bash
+# Run Health Check Target URL
+go run cmd/tools/health_check_targets/main.go
+
+# Reproses Signal via Gemini LLM
+go run cmd/tools/reprocess_signals/main.go
+```
+
+### 7.4 Verifikasi Log Service
+```bash
+docker logs --tail 50 sovera_core_api
+docker logs --tail 50 sovera_core_worker
+docker logs --tail 50 web-scraper-api-1
+```
+
+

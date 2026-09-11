@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net/url"
+	"strings"
 	"time"
 
 	"sovera-core-api/internal/model"
@@ -25,6 +27,57 @@ func NewCrawlerDispatcherHandler(crawlerRepo *repository.CrawlerRepository, disp
 	}
 }
 
+// extractHost extracts lowercase hostname from target URL for host throttling
+func extractHost(rawURL string) string {
+	trimmed := strings.TrimSpace(rawURL)
+	if trimmed == "" {
+		return "unknown"
+	}
+	u, err := url.Parse(trimmed)
+	if err != nil || u.Host == "" {
+		return "unknown"
+	}
+	return strings.ToLower(u.Host)
+}
+
+// interleaveTargetsByHost groups due targets by host domain and picks them round-robin
+// to maximize inter-host dispersion and prevent burst dispatches to the same host domain.
+func interleaveTargetsByHost(targets []model.CrawlingTarget) []model.CrawlingTarget {
+	if len(targets) <= 1 {
+		return targets
+	}
+
+	hostBuckets := make(map[string][]model.CrawlingTarget)
+	var hostKeys []string
+
+	for _, t := range targets {
+		h := extractHost(t.TargetURL)
+		if _, exists := hostBuckets[h]; !exists {
+			hostKeys = append(hostKeys, h)
+		}
+		hostBuckets[h] = append(hostBuckets[h], t)
+	}
+
+	result := make([]model.CrawlingTarget, 0, len(targets))
+	maxLen := 0
+	for _, bucket := range hostBuckets {
+		if len(bucket) > maxLen {
+			maxLen = len(bucket)
+		}
+	}
+
+	for i := 0; i < maxLen; i++ {
+		for _, h := range hostKeys {
+			bucket := hostBuckets[h]
+			if i < len(bucket) {
+				result = append(result, bucket[i])
+			}
+		}
+	}
+
+	return result
+}
+
 func (h *CrawlerDispatcherHandler) HandleDispatchCrawlingTask(ctx context.Context, t *asynq.Task) error {
 	log.Println("Starting execution of periodic crawling target dispatching worker...")
 
@@ -38,9 +91,31 @@ func (h *CrawlerDispatcherHandler) HandleDispatchCrawlingTask(ctx context.Contex
 		return nil
 	}
 
-	log.Printf("Found %d due crawling targets. Dispatching to Scraper Service...", len(dueTargets))
+	// Interleave targets by host domain to spread out requests to identical host domains
+	dueTargets = interleaveTargetsByHost(dueTargets)
+
+	log.Printf("Found %d due crawling targets across hosts. Dispatching to Scraper Service...", len(dueTargets))
+
+	// Per-host minimum inter-dispatch delay (3 seconds for same domain)
+	const SameHostMinDelay = 3 * time.Second
+	lastDispatchPerHost := make(map[string]time.Time)
 
 	for _, target := range dueTargets {
+		host := extractHost(target.TargetURL)
+		if lastTime, exists := lastDispatchPerHost[host]; exists {
+			elapsed := time.Since(lastTime)
+			if elapsed < SameHostMinDelay {
+				waitTime := SameHostMinDelay - elapsed
+				log.Printf("[Dispatcher] Same host '%s' detected. Enforcing %v delay before next request...", host, waitTime.Round(time.Millisecond))
+				select {
+				case <-ctx.Done():
+					log.Println("[Dispatcher] Context cancelled, stopping dispatch cycle")
+					return nil
+				case <-time.After(waitTime):
+				}
+			}
+		}
+
 		taskID := fmt.Sprintf("task_%s_%d", target.ID[:8], time.Now().Unix())
 
 		// Create dispatch log in database
@@ -67,7 +142,9 @@ func (h *CrawlerDispatcherHandler) HandleDispatchCrawlingTask(ctx context.Contex
 			log.Printf("Failed to update target next run time for %s: %v", target.ID, err)
 		}
 
-		log.Printf("Successfully dispatched target '%s' (TaskID: %s, HTTP %d)", target.SourceName, taskID, statusCode)
+		lastDispatchPerHost[host] = time.Now()
+
+		log.Printf("Successfully dispatched target '%s' (%s, TaskID: %s, HTTP %d)", target.SourceName, host, taskID, statusCode)
 	}
 
 	log.Println("Crawling dispatching cycle completed successfully.")

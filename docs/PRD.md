@@ -286,3 +286,30 @@ CREATE INDEX idx_deals_org_id ON deal_pipelines(org_id);
     ├── Load Testing (Queue Processing)
     └── Pilot Rollout with Target Partner Institution
 ```
+
+---
+
+## 9. Universal Humanitarian & NGO Expansion (PRD v2.0)
+
+### 9.1 Overview & Business Objectives
+Sovera dirancang untuk menyerap anggaran CSR, TJSL BUMN, hibah korporasi, dan Zakat Perusahaan bagi seluruh ekosistem lembaga nirlaba (NGO, Yayasan Kebencanaan, Lingkungan Hidup, Pendidikan, Kesehatan, Pemberdayaan Masyarakat, serta Lembaga Zakat/Wakaf).
+
+1. **Perluasan Total Addressable Market (TAM):** Membuka akses platform bagi ribuan NGO nasional dan internasional yang beroperasi di Indonesia.
+2. **Standardisasi Taksonomi Universal:** Mengadopsi pilar SDG dan Klaster Kemanusiaan Standar Nasional/Internasional sebagai jembatan semantik utama antara program lembaga dan fokus korporasi.
+3. **Konfigurasi Dinamis Berbasis Tenant (`org_type`):** Antarmuka, taksonomi form, dan prompt AI secara otomatis beradaptasi dengan identitas masing-masing lembaga (`HUMANITARIAN_NGO`, `DISASTER_RELIEF`, `ENVIRONMENT_CONSERVATION`, `HEALTH_EDUCATION`, `ZAKAT_WAQF_INSTITUTION`, `UNIVERSITY_ENDOWMENT`).
+
+### 9.2 Universal Sector & Intervention Framework
+Taksonomi program mengadopsi 3 layer:
+1. **Primary Cluster:** Disaster & Emergency, Education & Literacy, Health & WASH, Economic Empowerment, Climate & Environment, Social Protection, Fikih Zakat/Wakaf.
+2. **SDG Mapping:** SDG 1 hingga SDG 17.
+3. **ESG Alignment:** Environmental (E), Social (S), Governance (G).
+
+```sql
+-- Penyesuaian Skema Database Multi-Sector
+ALTER TABLE organizations ADD COLUMN IF NOT EXISTS org_type VARCHAR(50) DEFAULT 'HUMANITARIAN_NGO';
+ALTER TABLE institution_programs
+  ADD COLUMN IF NOT EXISTS primary_cluster VARCHAR(100) NOT NULL DEFAULT 'COMMUNITY_DEVELOPMENT',
+  ADD COLUMN IF NOT EXISTS target_sdgs TEXT[] DEFAULT '{}',
+  ADD COLUMN IF NOT EXISTS esg_pillar VARCHAR(20) DEFAULT 'SOCIAL',
+  ALTER COLUMN asnaf_category DROP NOT NULL;
+```
