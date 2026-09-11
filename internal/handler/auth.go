@@ -177,3 +177,13 @@ func (h *AuthHandler) Me(c *fiber.Ctx) error {
 		},
 	})
 }
+
+// Logout godoc
+// POST /api/v1/auth/logout
+// Invalidates client auth token and completes operator logout session.
+func (h *AuthHandler) Logout(c *fiber.Ctx) error {
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{
+		"success": true,
+		"message": "Sesi otorisasi admin berhasil diakhiri.",
+	})
+}

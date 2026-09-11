@@ -76,8 +76,9 @@ CREATE INDEX IF NOT EXISTS idx_org_programs_source_id ON organization_programs(s
 CREATE TABLE IF NOT EXISTS organization_partnerships (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     org_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
-    company_id UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    company_id UUID NOT NULL,
     partnership_type VARCHAR(100),
+
     program_name VARCHAR(255),
     description TEXT,
     start_date DATE,

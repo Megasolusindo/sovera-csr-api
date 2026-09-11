@@ -3,10 +3,14 @@ package repository
 import (
 	"context"
 	"fmt"
+	"log"
+	"strings"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"sovera-core-api/internal/model"
+	"sovera-core-api/internal/pkg/phoneverifier"
+	"sovera-core-api/internal/pkg/urlverifier"
 )
 
 type CompanyRepository struct {
@@ -42,7 +46,7 @@ func (r *CompanyRepository) GetCompanyStats(ctx context.Context) (*CompanyStats,
 }
 
 // ListCompanies retrieves a paginated list of companies with target and signal counts.
-func (r *CompanyRepository) ListCompanies(ctx context.Context, limit, offset int, search, sector, verificationStatus string) ([]model.CompanyDetail, int, error) {
+func (r *CompanyRepository) ListCompanies(ctx context.Context, limit, offset int, search, sector, verificationStatus, priorityTier, companyType string) ([]model.CompanyDetail, int, error) {
 	if r.pool == nil {
 		return nil, 0, nil
 	}
@@ -52,14 +56,26 @@ func (r *CompanyRepository) ListCompanies(ctx context.Context, limit, offset int
 	argIdx := 1
 
 	if search != "" {
-		whereClause += fmt.Sprintf(" AND (c.name ILIKE $%d OR array_to_string(c.alias_keywords, ' ') ILIKE $%d OR c.ticker ILIKE $%d)", argIdx, argIdx, argIdx)
-		args = append(args, "%"+search+"%")
+		whereClause += fmt.Sprintf(" AND (c.name ILIKE $%d OR c.legal_name ILIKE $%d OR c.slug ILIKE $%d OR c.ticker ILIKE $%d OR c.id::text ILIKE $%d OR array_to_string(c.alias_keywords, ' ') ILIKE $%d)", argIdx, argIdx, argIdx, argIdx, argIdx, argIdx)
+		args = append(args, "%"+strings.TrimSpace(search)+"%")
 		argIdx++
 	}
 
 	if sector != "" && sector != "ALL" {
-		whereClause += fmt.Sprintf(" AND c.industry_sector = $%d", argIdx)
-		args = append(args, sector)
+		whereClause += fmt.Sprintf(" AND c.industry_sector ILIKE $%d", argIdx)
+		args = append(args, "%"+sector+"%")
+		argIdx++
+	}
+
+	if companyType != "" && companyType != "ALL" {
+		whereClause += fmt.Sprintf(" AND UPPER(c.company_type) = UPPER($%d)", argIdx)
+		args = append(args, companyType)
+		argIdx++
+	}
+
+	if priorityTier != "" && priorityTier != "ALL" {
+		whereClause += fmt.Sprintf(" AND c.priority_tier = $%d", argIdx)
+		args = append(args, priorityTier)
 		argIdx++
 	}
 
@@ -98,7 +114,7 @@ func (r *CompanyRepository) ListCompanies(ctx context.Context, limit, offset int
 	}
 	defer rows.Close()
 
-	var result []model.CompanyDetail
+	result := []model.CompanyDetail{}
 	for rows.Next() {
 		var cd model.CompanyDetail
 		err := rows.Scan(
@@ -186,26 +202,66 @@ func (r *CompanyRepository) CreateCompany(ctx context.Context, c model.Company) 
 		return nil, fmt.Errorf("database pool is nil")
 	}
 
-	query := `
-		INSERT INTO company.companies (
-			name, legal_name, slug, industry_sector, company_type, alias_keywords, created_at, updated_at
-		) VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
-		ON CONFLICT (slug) DO UPDATE SET updated_at = NOW()
-		RETURNING id::text, created_at, updated_at;
-	`
+	upperName := strings.TrimSpace(strings.ToUpper(c.Name))
+	if strings.HasPrefix(upperName, "CV ") || strings.HasPrefix(upperName, "CV.") {
+		return nil, fmt.Errorf("CV entities are excluded from corporate directory")
+	}
+
+	slug := c.Slug
+	if slug == "" {
+		slug = strings.ToLower(strings.ReplaceAll(strings.TrimSpace(c.Name), " ", "-"))
+	}
 
 	legalName := c.Name
-	if c.LegalName != nil {
+	if c.LegalName != nil && *c.LegalName != "" {
 		legalName = *c.LegalName
 	}
 	companyType := c.CompanyType
 	if companyType == "" {
 		companyType = "SWASTA"
 	}
+	priorityTier := c.PriorityTier
+	if priorityTier == "" {
+		priorityTier = "TIER_1"
+	}
+	isPublic := c.IsPublic || companyType == "SWASTA_TBK" || (c.Ticker != nil && *c.Ticker != "")
+
+	if c.Website != nil && *c.Website != "" {
+		ok, normalized, err := urlverifier.DefaultVerifier.VerifyWebsite(ctx, *c.Website)
+		if !ok {
+			log.Printf("[URLVerifier] Rejected invalid/unreachable website '%s' for company '%s': %v", *c.Website, c.Name, err)
+			c.Website = nil
+		} else {
+			c.Website = &normalized
+		}
+	}
+
+	if c.Phone != nil && *c.Phone != "" {
+		ok, normalized, err := phoneverifier.DefaultVerifier.Verify(*c.Phone)
+		if !ok {
+			log.Printf("[PhoneVerifier] Rejected invalid company phone number '%s' for '%s': %v", *c.Phone, c.Name, err)
+			c.Phone = nil
+		} else {
+			c.Phone = &normalized
+		}
+	}
+
+	query := `
+		INSERT INTO company.companies (
+			name, legal_name, slug, industry_sector, company_type, website, ticker, is_public, priority_tier, alias_keywords, created_at, updated_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW())
+		ON CONFLICT (slug) DO UPDATE SET 
+			name = EXCLUDED.name,
+			website = COALESCE(NULLIF(EXCLUDED.website, ''), company.companies.website),
+			ticker = COALESCE(NULLIF(EXCLUDED.ticker, ''), company.companies.ticker),
+			priority_tier = EXCLUDED.priority_tier,
+			updated_at = NOW()
+		RETURNING id::text, created_at, updated_at;
+	`
 
 	err := r.pool.QueryRow(
 		ctx, query,
-		c.Name, legalName, c.Slug, c.IndustrySector, companyType, c.AliasKeywords,
+		c.Name, legalName, slug, c.IndustrySector, companyType, c.Website, c.Ticker, isPublic, priorityTier, c.AliasKeywords,
 	).Scan(&c.ID, &c.CreatedAt, &c.UpdatedAt)
 
 	if err != nil {
@@ -245,10 +301,22 @@ func (r *CompanyRepository) GetCompaniesMissingWebsite(ctx context.Context, limi
 	return list, nil
 }
 
-// UpdateCompanyWebsite updates the verified website URL and website_source in company_csr_profiles.
+// UpdateCompanyWebsite updates the verified website URL and website_source in company_csr_profiles after checking reachability.
 func (r *CompanyRepository) UpdateCompanyWebsite(ctx context.Context, companyID string, website string) error {
 	if r.pool == nil {
 		return nil
+	}
+
+	website = strings.TrimSpace(website)
+	if website == "" {
+		return fmt.Errorf("empty website URL")
+	}
+
+	// Verify reachability of the website URL before persisting into corporate database
+	ok, normalized, err := urlverifier.DefaultVerifier.VerifyWebsite(ctx, website)
+	if !ok {
+		log.Printf("[URLVerifier] Rejected website '%s' for company ID %s: %v", website, companyID, err)
+		return fmt.Errorf("website URL '%s' is invalid or unreachable: %w", website, err)
 	}
 
 	tx, err := r.pool.Begin(ctx)
@@ -257,12 +325,12 @@ func (r *CompanyRepository) UpdateCompanyWebsite(ctx context.Context, companyID 
 	}
 	defer tx.Rollback(ctx)
 
-	_, err = tx.Exec(ctx, `UPDATE company.companies SET website = $1, updated_at = NOW() WHERE id = $2::uuid`, website, companyID)
+	_, err = tx.Exec(ctx, `UPDATE company.companies SET website = $1, updated_at = NOW() WHERE id = $2::uuid`, normalized, companyID)
 	if err != nil {
 		return fmt.Errorf("failed to update company website: %w", err)
 	}
 
-	csrSource := fmt.Sprintf("%s/csr", website)
+	csrSource := fmt.Sprintf("%s/csr", normalized)
 	_, _ = tx.Exec(ctx, `
 		INSERT INTO company_csr_profiles (company_id, has_csr, website_source, updated_at)
 		VALUES ($1::uuid, true, $2, NOW())
@@ -271,5 +339,6 @@ func (r *CompanyRepository) UpdateCompanyWebsite(ctx context.Context, companyID 
 
 	return tx.Commit(ctx)
 }
+
 
 

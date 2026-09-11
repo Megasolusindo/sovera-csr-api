@@ -92,9 +92,7 @@ func (e *ESGExtractor) ProcessESGExtraction(
 
 	// 3. Upsert ESG Profile to Database if Repo is available
 	if e.esgRepo == nil {
-		log.Printf("[ESGExtractor] Repo is nil, returning in-memory profile for company [%s]", *targetCompanyID)
-		esgProfile.ID = "esg_mock_" + *targetCompanyID
-		return esgProfile, nil
+		return nil, fmt.Errorf("esg repository not initialized")
 	}
 
 	upsertedProfile, err := e.esgRepo.UpsertProfile(ctx, esgProfile, nil)

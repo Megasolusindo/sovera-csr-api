@@ -148,3 +148,78 @@ func (r *TokenLogRepository) GetTenantTokenSummary(ctx context.Context, orgID st
 
 	return summary, nil
 }
+
+type GlobalTokenSummary struct {
+	TotalTokens           int          `json:"total_tokens"`
+	TotalPromptTokens     int          `json:"total_prompt_tokens"`
+	TotalCompletionTokens int          `json:"total_completion_tokens"`
+	TotalCostUSD          float64      `json:"total_cost_usd"`
+	TotalCostIDR          float64      `json:"total_cost_idr"`
+	ActiveTenantsCount    int          `json:"active_tenants_count"`
+	RecentLogs            []AITokenLog `json:"recent_logs"`
+}
+
+// GetAllTokenStats retrieves aggregated AI token usage across all tenant organizations.
+func (r *TokenLogRepository) GetAllTokenStats(ctx context.Context) (*GlobalTokenSummary, error) {
+	summary := &GlobalTokenSummary{
+		RecentLogs: []AITokenLog{},
+	}
+
+	if r.dbPool == nil {
+		return summary, nil
+	}
+
+	// 1. Aggregate totals across all logs
+	aggQuery := `
+		SELECT 
+			COALESCE(SUM(prompt_tokens), 0),
+			COALESCE(SUM(completion_tokens), 0),
+			COALESCE(SUM(total_tokens), 0),
+			COALESCE(SUM(estimated_cost_usd), 0),
+			COUNT(DISTINCT org_id)
+		FROM crm.ai_token_logs;
+	`
+	_ = r.dbPool.QueryRow(ctx, aggQuery).Scan(
+		&summary.TotalPromptTokens,
+		&summary.TotalCompletionTokens,
+		&summary.TotalTokens,
+		&summary.TotalCostUSD,
+		&summary.ActiveTenantsCount,
+	)
+
+	summary.TotalCostIDR = summary.TotalCostUSD * 16000.0
+
+	// 2. Fetch latest 20 logs with organization name
+	logQuery := `
+		SELECT 
+			l.id::text,
+			COALESCE(o.name, l.org_id::text) AS tenant_name,
+			l.feature_name,
+			l.model_name,
+			l.prompt_tokens,
+			l.completion_tokens,
+			l.total_tokens,
+			l.estimated_cost_usd,
+			l.created_at
+		FROM crm.ai_token_logs l
+		LEFT JOIN organizations o ON o.id = l.org_id
+		ORDER BY l.created_at DESC
+		LIMIT 20;
+	`
+	rows, err := r.dbPool.Query(ctx, logQuery)
+	if err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var l AITokenLog
+			if err := rows.Scan(
+				&l.ID, &l.OrgID, &l.FeatureName, &l.ModelName,
+				&l.PromptTokens, &l.CompletionTokens, &l.TotalTokens, &l.EstimatedCostUSD, &l.CreatedAt,
+			); err == nil {
+				summary.RecentLogs = append(summary.RecentLogs, l)
+			}
+		}
+	}
+
+	return summary, nil
+}
+

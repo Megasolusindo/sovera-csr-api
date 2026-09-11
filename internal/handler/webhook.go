@@ -187,19 +187,19 @@ func (h *WebhookHandler) HandleCrawlerWebhook(c *fiber.Ctx) error {
 		}
 	}
 
+	// Record success in target health (resets consecutive_failures & updates last_http_status)
+	if payload.TargetID != "" && h.crawlerRepo != nil {
+		if err := h.crawlerRepo.RecordSuccess(c.Context(), payload.TargetID, httpStatusCode); err != nil {
+			log.Printf("Notice: Could not record success for TargetID %s: %v", payload.TargetID, err)
+		}
+	}
+
 	if payload.RawText == "" && payload.MarkdownContent == "" && (payload.SourceType != "SEARCH_DISCOVERY" || len(payload.DiscoveredItems) == 0) {
 		return c.Status(fiber.StatusUnprocessableEntity).JSON(fiber.Map{
 			"success": false,
 			"error":   "EMPTY_CONTENT",
 			"message": "Payload raw_text or markdown_content cannot be empty for successful scrapes",
 		})
-	}
-
-	// Record success in target health (resets consecutive_failures)
-	if payload.TargetID != "" && h.crawlerRepo != nil {
-		if err := h.crawlerRepo.RecordSuccess(c.Context(), payload.TargetID, httpStatusCode); err != nil {
-			log.Printf("Notice: Could not record success for TargetID %s: %v", payload.TargetID, err)
-		}
 	}
 
 	// Calculate SHA-256 content_hash for deduplication via Normalizer

@@ -50,18 +50,11 @@ func TestGenerateSlug(t *testing.T) {
 	}
 }
 
-func TestResolveCompany_Mock(t *testing.T) {
+func TestResolveCompany_NilRepo(t *testing.T) {
 	resolver := NewEntityResolver(nil)
 
-	res, err := resolver.ResolveCompany(context.Background(), "PT Telkom Indonesia Tbk", "Telecommunication")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if res.Slug != "telkom-indonesia" {
-		t.Errorf("expected slug 'telkom-indonesia', got %q", res.Slug)
-	}
-	if res.CompanyID == nil {
-		t.Errorf("expected non-nil CompanyID")
+	_, err := resolver.ResolveCompany(context.Background(), "PT Telkom Indonesia Tbk", "Telecommunication")
+	if err == nil {
+		t.Fatalf("expected error when companyRepo is nil, got nil")
 	}
 }

@@ -24,6 +24,13 @@ type ExtractedSignal struct {
 	Summary               string   `json:"summary"`
 	PartnerNGO            string   `json:"partner_ngo"`
 	CSREmailContact       string   `json:"csr_email_contact"`
+	SourceQuote           string   `json:"source_quote"`
+	ConfidenceScore       float64  `json:"confidence_score"`
+	VerificationStatus    string   `json:"verification_status"`
+	CSRRelevance          string   `json:"csr_relevance"`
+	ActivityFocus         string   `json:"activity_focus"`
+	ActionType            string   `json:"action_type"`
+	OpportunityAlert      bool     `json:"opportunity_alert"`
 }
 
 type GeminiService struct {
@@ -38,20 +45,39 @@ func NewGeminiService(apiKey string) *GeminiService {
 	}
 }
 
-// ExtractCorporateSignal uses Gemini 1.5 Flash to extract structured corporate intelligence fields from raw scraper text.
+// ExtractCorporateSignal uses Gemini to extract grounded, structured corporate intelligence fields from raw text.
 func (s *GeminiService) ExtractCorporateSignal(ctx context.Context, rawText string) (*ExtractedSignal, error) {
 	if s.apiKey == "" {
-		// Mock extraction for development mode when no API key is set
-		return s.mockExtraction(rawText), nil
+		return nil, fmt.Errorf("AI_API_KEY is missing or unconfigured")
 	}
 
-	prompt := fmt.Sprintf(`Extract structured CSR funding intelligence from the following corporate text into a raw JSON object with keys:
-"company_name" (string), "industry_sector" (string), "csr_pillar_focus" (string), "target_regions" (array of strings), "estimated_budget_signal" (number), "trigger_event" (string), "intent_score" (number 1-100), "summary" (string), "partner_ngo" (string), "csr_email_contact" (string).
+	prompt := fmt.Sprintf(`You are a Corporate Sustainability & CSR Financial Analyst. Extract structured CSR funding intelligence from the text below into a JSON object according to the 3-Level Taxonomy (CSR Relevance, Activity Focus, Action Type).
+EVERY extracted field MUST be grounded by an exact quote ("source_quote") directly present in the input text. Do NOT hallucinate data.
 
-Text to process:
+STRICT FILTER: ONLY extract corporate signals for Perseroan Terbatas (PT, PT Tbk, BUMN, Multinationals, International Corporates).
+DO NOT extract signals for CV (Commanditaire Vennootschap) or small local partnerships. If the entity in the text is a CV, return "company_name": "".
+
+JSON Keys Required:
+- "company_name" (string): Official registered corporate name (MUST be PT/BUMN/Corporation, NOT CV).
+- "industry_sector" (string): Industry classification.
+- "csr_pillar_focus" (string): Primary focus area e.g. Education, Environment, MSME, Disaster Relief, Health.
+- "target_regions" (array of strings): Geographical regions mentioned.
+- "estimated_budget_signal" (number): Alokasi dana CSR/TJSL in IDR (Rupiah) if mentioned, else 0.
+- "trigger_event" (string): Corporate event e.g. Annual Report, Press Release, Q2 Financials, CSR Launch.
+- "intent_score" (number 1-100): Score of active partnership/grant intent.
+- "summary" (string): Concise summary of the CSR opportunity.
+- "partner_ngo" (string): NGO/Foundation partner mentioned, if any.
+- "csr_email_contact" (string): Contact email address or phone if present.
+- "source_quote" (string): EXACT verbatim quote from the text backing this extraction.
+- "csr_relevance" (string): Level 1 Taxonomy -> "HIGH", "MEDIUM", "LOW", "NON_CSR".
+- "activity_focus" (string): Level 2 Taxonomy -> "Education", "Health", "Environment", "UMKM & Economic Empowerment", "Humanitarian & Disaster Relief", "Community Development", "Infrastructure & Digital Inclusion", "Volunteerism", "Creating Shared Value (CSV)".
+- "action_type" (string): Level 3 Taxonomy -> "Donation", "Partnership", "Scholarship", "Training", "Volunteer", "Infrastructure Development", "Empowerment", "Grant", "Funding", "Community Program".
+- "opportunity_alert" (boolean): Set to true IF the text explicitly contains open partnership offers, calls for proposals, grant opportunities, or funding invitations (e.g., "membuka kemitraan", "call for proposal", "open partnership", "grant opportunity").
+
+Input Text:
 %s`, rawText)
 
-	url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=%s", s.apiKey)
+	url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=%s", s.apiKey)
 	reqBody := map[string]interface{}{
 		"contents": []map[string]interface{}{
 			{
@@ -62,6 +88,7 @@ Text to process:
 		},
 		"generationConfig": map[string]interface{}{
 			"response_mime_type": "application/json",
+			"temperature":        0.1,
 		},
 	}
 
@@ -88,7 +115,7 @@ Text to process:
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return s.mockExtraction(rawText), nil
+		return nil, fmt.Errorf("Gemini API call failed with status %d: %s", resp.StatusCode, string(bodyBytes))
 	}
 
 	var geminiResp struct {
@@ -102,22 +129,65 @@ Text to process:
 	}
 
 	if err := json.Unmarshal(bodyBytes, &geminiResp); err != nil || len(geminiResp.Candidates) == 0 || len(geminiResp.Candidates[0].Content.Parts) == 0 {
-		return s.mockExtraction(rawText), nil
+		return nil, fmt.Errorf("failed to parse Gemini candidates response: %w", err)
 	}
 
 	extractedText := geminiResp.Candidates[0].Content.Parts[0].Text
 
 	var signal ExtractedSignal
 	if err := json.Unmarshal([]byte(extractedText), &signal); err != nil {
-		return s.mockExtraction(rawText), nil
+		return nil, fmt.Errorf("failed to parse Gemini JSON signal payload: %w", err)
 	}
+
+	// Compute grounded confidence rating
+	s.evaluateSignalConfidence(&signal, rawText)
 
 	return &signal, nil
 }
 
+// evaluateSignalConfidence dynamically evaluates extraction confidence & grounding validity.
+func (s *GeminiService) evaluateSignalConfidence(signal *ExtractedSignal, rawText string) {
+	score := 0.0
+
+	// Check Company Name validity
+	if signal.CompanyName != "" && signal.CompanyName != "Unknown" {
+		score += 0.25
+	}
+
+	// Check Source Quote grounding in original text
+	if signal.SourceQuote != "" && strings.Contains(strings.ToLower(rawText), strings.ToLower(signal.SourceQuote)) {
+		score += 0.35
+	} else if signal.SourceQuote != "" {
+		score += 0.15 // partial quote credit
+	}
+
+	// Check Budget Signal presence
+	if signal.EstimatedBudgetSignal > 0 {
+		score += 0.20
+	}
+
+	// Check Contact Email presence
+	if signal.CSREmailContact != "" && strings.Contains(signal.CSREmailContact, "@") {
+		score += 0.20
+	}
+
+	if score > 1.0 {
+		score = 1.0
+	}
+
+	signal.ConfidenceScore = math.Round(score*100) / 100
+
+	if signal.ConfidenceScore >= 0.80 {
+		signal.VerificationStatus = "HIGH_CONFIDENCE"
+	} else if signal.ConfidenceScore >= 0.60 {
+		signal.VerificationStatus = "MEDIUM_CONFIDENCE"
+	} else {
+		signal.VerificationStatus = "NEEDS_REVIEW"
+	}
+}
+
 // GenerateEmbedding creates a 1536-dimensional normalized vector embedding for text.
 func (s *GeminiService) GenerateEmbedding(ctx context.Context, text string) ([]float32, error) {
-	// Generate 1536 float32 dimensions
 	vec := make([]float32, 1536)
 	seed := int64(0)
 	for i := 0; i < len(text); i++ {
@@ -132,7 +202,6 @@ func (s *GeminiService) GenerateEmbedding(ctx context.Context, text string) ([]f
 		sumSq += float64(val * val)
 	}
 
-	// Normalize vector for cosine distance computation
 	norm := float32(math.Sqrt(sumSq))
 	if norm > 0 {
 		for i := 0; i < 1536; i++ {
@@ -143,25 +212,7 @@ func (s *GeminiService) GenerateEmbedding(ctx context.Context, text string) ([]f
 	return vec, nil
 }
 
-func (s *GeminiService) mockExtraction(rawText string) *ExtractedSignal {
-	companyName := "PT Corporate Emisi Tbk"
-	if strings.Contains(rawText, "Maju Bersama") {
-		companyName = "PT Maju Bersama Tbk"
-	} else if strings.Contains(rawText, "Telko") {
-		companyName = "PT Telko Nusantara Tbk"
-	}
 
-	return &ExtractedSignal{
-		CompanyName:           companyName,
-		IndustrySector:        "Telecommunication & Technology",
-		CSRPillarFocus:        "Digital Education & STEM Scholarships",
-		TargetRegions:         []string{"Jawa Barat", "Nusa Tenggara Timur", "Papua"},
-		EstimatedBudgetSignal: 25000000000.0,
-		TriggerEvent:          "Q2 Earnings Release & Annual CSR Budget Allocation",
-		IntentScore:           92,
-		Summary:               "Perusahaan mengalokasikan anggaran TJSL Rp 25 Miliar untuk pilar pendidikan digital dan beasiswa daerah 3T.",
-	}
-}
 
 type ExtractedESGData struct {
 	ReportingYear          int16                  `json:"reporting_year"`
@@ -173,21 +224,35 @@ type ExtractedESGData struct {
 	SustainabilityStrategy string                 `json:"sustainability_strategy"`
 	SDGAlignment           map[string]interface{} `json:"sdg_alignment"`
 	Confidence             float64                `json:"confidence"`
+	SourceQuote            string                 `json:"source_quote"`
+	VerificationStatus     string                 `json:"verification_status"`
 }
 
-// ExtractESGProfile extracts structured ESG metrics, ratings, and sustainability strategies using Gemini 1.5 Flash.
+// ExtractESGProfile extracts structured ESG metrics, ratings, and sustainability strategies using Gemini.
 func (s *GeminiService) ExtractESGProfile(ctx context.Context, rawText string) (*ExtractedESGData, error) {
 	if s.apiKey == "" {
-		return s.mockESGExtraction(rawText), nil
+		return nil, fmt.Errorf("AI_API_KEY is missing or unconfigured")
 	}
 
-	prompt := fmt.Sprintf(`Extract structured corporate ESG sustainability metrics from the following text into a raw JSON object with keys:
-"reporting_year" (number e.g. 2024), "overall_score" (number 0-100), "environmental_score" (number 0-100), "social_score" (number 0-100), "governance_score" (number 0-100), "esg_rating" (string e.g. "AA", "A", "BBB"), "sustainability_strategy" (string summary), "sdg_alignment" (JSON object mapping SDG numbers e.g. {"SDG4": "Beasiswa Digital", "SDG13": "Net Zero 2060"}), "confidence" (number 0.0-1.0).
+	prompt := fmt.Sprintf(`You are a Senior ESG & Sustainability Auditor. Extract structured corporate ESG metrics from the text below into a JSON object.
+EVERY metric MUST be grounded by a verbatim excerpt ("source_quote") directly present in the input text. Do NOT hallucinate scores.
 
-Text to process:
+JSON Keys Required:
+- "reporting_year" (number e.g. 2024): Fiscal reporting year.
+- "overall_score" (number 0-100): Overall ESG rating score.
+- "environmental_score" (number 0-100): Environmental (E) score.
+- "social_score" (number 0-100): Social (S) score.
+- "governance_score" (number 0-100): Governance (G) score.
+- "esg_rating" (string e.g. "AAA", "AA", "A", "BBB"): Composite rating grade.
+- "sustainability_strategy" (string summary): Strategy summary.
+- "sdg_alignment" (JSON object mapping SDG numbers to initiatives e.g. {"SDG4": "Beasiswa Digital", "SDG13": "Net Zero 2060"}).
+- "confidence" (number 0.0-1.0): Confidence score.
+- "source_quote" (string): EXACT verbatim quote backing this ESG assessment.
+
+Input Text:
 %s`, rawText)
 
-	url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=%s", s.apiKey)
+	url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=%s", s.apiKey)
 	reqBody := map[string]interface{}{
 		"contents": []map[string]interface{}{
 			{
@@ -198,6 +263,7 @@ Text to process:
 		},
 		"generationConfig": map[string]interface{}{
 			"response_mime_type": "application/json",
+			"temperature":        0.1,
 		},
 	}
 
@@ -224,7 +290,7 @@ Text to process:
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return s.mockESGExtraction(rawText), nil
+		return nil, fmt.Errorf("Gemini ESG API failed with status %d: %s", resp.StatusCode, string(bodyBytes))
 	}
 
 	var geminiResp struct {
@@ -238,34 +304,25 @@ Text to process:
 	}
 
 	if err := json.Unmarshal(bodyBytes, &geminiResp); err != nil || len(geminiResp.Candidates) == 0 || len(geminiResp.Candidates[0].Content.Parts) == 0 {
-		return s.mockESGExtraction(rawText), nil
+		return nil, fmt.Errorf("failed to parse Gemini ESG response candidates: %w", err)
 	}
 
 	extractedText := geminiResp.Candidates[0].Content.Parts[0].Text
 
 	var esgData ExtractedESGData
 	if err := json.Unmarshal([]byte(extractedText), &esgData); err != nil {
-		return s.mockESGExtraction(rawText), nil
+		return nil, fmt.Errorf("failed to unmarshal Gemini ESG JSON payload: %w", err)
+	}
+
+	if esgData.Confidence >= 0.85 {
+		esgData.VerificationStatus = "HIGH_CONFIDENCE"
+	} else if esgData.Confidence >= 0.65 {
+		esgData.VerificationStatus = "MEDIUM_CONFIDENCE"
+	} else {
+		esgData.VerificationStatus = "NEEDS_REVIEW"
 	}
 
 	return &esgData, nil
 }
 
-func (s *GeminiService) mockESGExtraction(rawText string) *ExtractedESGData {
-	currentYear := int16(time.Now().Year() - 1)
-	return &ExtractedESGData{
-		ReportingYear:          currentYear,
-		OverallScore:           84.5,
-		EnvironmentalScore:     81.2,
-		SocialScore:            88.0,
-		GovernanceScore:        84.3,
-		ESGRating:              "AA",
-		SustainabilityStrategy: "Komitmen Dekarbonisasi Operasional Net-Zero 2050 dan Inklusi Akses Pendidikan Digital Daerah 3T.",
-		SDGAlignment: map[string]interface{}{
-			"SDG4":  "Program Pendidikan Beasiswa Digital",
-			"SDG8":  "Pemberdayaan Vokasi & UMKM Local Supplier",
-			"SDG13": "Pemasangan Panel Surya di 120 Site Operasional",
-		},
-		Confidence: 0.92,
-	}
-}
+

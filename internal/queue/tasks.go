@@ -14,6 +14,7 @@ const (
 	TypeLLMExtraction      = "task:llm_extraction"
 	TypeESGExtraction      = "task:esg_extraction"
 	TypeProposalGeneration = "task:proposal_generation"
+	TypeIDXSync            = "task:idx_sync"
 
 	QueueDispatchCrawling   = "dispatch-crawling-queue"
 	QueuePollPendingTasks   = "poll-pending-tasks-queue"
@@ -21,6 +22,7 @@ const (
 	QueueLLMExtraction      = "llm-extraction-queue"
 	QueueESGExtraction      = "esg-extraction-queue"
 	QueueProposalGeneration = "proposal-generation-queue"
+	QueueIDXSync            = "idx-sync-queue"
 )
 
 type LLMExtractionPayload struct {

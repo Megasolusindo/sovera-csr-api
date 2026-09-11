@@ -60,9 +60,19 @@ func (e *EntityResolver) GenerateSlug(rawName string) string {
 	return strings.Trim(slug, "-")
 }
 
+// IsCV returns true if rawName represents a CV (Commanditaire Vennootschap) entity.
+func IsCV(rawName string) bool {
+	upper := strings.TrimSpace(strings.ToUpper(rawName))
+	return strings.HasPrefix(upper, "CV ") || strings.HasPrefix(upper, "CV.") || regexp.MustCompile(`(?i)\bCV\.?\b`).MatchString(rawName)
+}
+
 // ResolveCompany attempts to find a matching company in companies master table.
 // If none exists, it auto-provisions a new Company record.
 func (e *EntityResolver) ResolveCompany(ctx context.Context, rawName, industrySector string) (*ResolvedCompany, error) {
+	if IsCV(rawName) {
+		return nil, fmt.Errorf("entity '%s' is a CV and excluded from corporate directory", rawName)
+	}
+
 	cleanName := e.CleanCompanyName(rawName)
 	if cleanName == "" {
 		cleanName = rawName
@@ -70,15 +80,7 @@ func (e *EntityResolver) ResolveCompany(ctx context.Context, rawName, industrySe
 	slug := e.GenerateSlug(rawName)
 
 	if e.companyRepo == nil {
-		// Mock fallback when DB pool is not initialized
-		mockID := "comp_mock_" + slug
-		return &ResolvedCompany{
-			CompanyID:       &mockID,
-			CanonicalName:   rawName,
-			Slug:            slug,
-			IsNew:           false,
-			MatchConfidence: 0.85,
-		}, nil
+		return nil, fmt.Errorf("company repository not initialized")
 	}
 
 	// 1. Search existing company by slug, name ILIKE or alias keywords

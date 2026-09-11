@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -12,20 +13,24 @@ import (
 )
 
 type CorporateSignal struct {
-	ID                    string     `json:"id"`
-	CompanyName           string     `json:"company_name"`
-	IndustrySector        string     `json:"industry_sector"`
-	SourceType            string     `json:"source_type"`
-	SourceURL             string     `json:"source_url"`
-	Summary               string     `json:"summary"`
-	ExtractedPillar       string     `json:"extracted_pillar"`
-	TargetRegions         []string   `json:"target_regions"`
-	EstimatedBudgetSignal float64    `json:"estimated_budget_signal"`
-	TriggerEvent          string     `json:"trigger_event"`
-	IntentScore           int        `json:"intent_score"`
-	ContentHash           string     `json:"content_hash"`
-	PublishedDate         time.Time  `json:"published_date"`
-	CreatedAt             time.Time  `json:"created_at"`
+	ID                    string    `json:"id"`
+	CompanyName           string    `json:"company_name"`
+	IndustrySector        string    `json:"industry_sector"`
+	SourceType            string    `json:"source_type"`
+	SourceURL             string    `json:"source_url"`
+	Summary               string    `json:"summary"`
+	ExtractedPillar       string    `json:"extracted_pillar"`
+	TargetRegions         []string  `json:"target_regions"`
+	EstimatedBudgetSignal float64   `json:"estimated_budget_signal"`
+	TriggerEvent          string    `json:"trigger_event"`
+	IntentScore           int       `json:"intent_score"`
+	ContentHash           string    `json:"content_hash"`
+	CSRRelevance          string    `json:"csr_relevance"`
+	ActivityFocus         string    `json:"activity_focus"`
+	ActionType            string    `json:"action_type"`
+	OpportunityAlert      bool      `json:"opportunity_alert"`
+	PublishedDate         time.Time `json:"published_date"`
+	CreatedAt             time.Time `json:"created_at"`
 }
 
 type MatchedProgram struct {
@@ -47,20 +52,31 @@ func NewSignalRepository(dbPool *pgxpool.Pool) *SignalRepository {
 // SaveSignal inserts or updates an extracted corporate signal into public_corporate_signals.
 func (r *SignalRepository) SaveSignal(ctx context.Context, signal *ai.ExtractedSignal, companyID *string, sourceType, sourceURL, contentHash string, embedding []float32) (string, error) {
 	if r.dbPool == nil {
-		return "sig_mock_12345", nil
+		return "", fmt.Errorf("database connection pool is nil")
+	}
+
+	relevance := signal.CSRRelevance
+	if relevance == "" {
+		relevance = "HIGH"
 	}
 
 	query := `
 		INSERT INTO intelligence.company_signals (
 			company_id, company_name, industry_sector, source_type, source_url, summary, 
 			extracted_pillar, target_regions, estimated_budget_signal, trigger_event, 
-			intent_score, content_hash, published_date
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, CURRENT_DATE)
+			intent_score, content_hash, csr_relevance, activity_focus, action_type, opportunity_alert,
+			published_date, created_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, CURRENT_DATE, NOW())
 		ON CONFLICT (content_hash) DO UPDATE SET 
 			company_id = EXCLUDED.company_id,
 			company_name = EXCLUDED.company_name,
 			summary = EXCLUDED.summary,
-			intent_score = EXCLUDED.intent_score
+			intent_score = EXCLUDED.intent_score,
+			csr_relevance = EXCLUDED.csr_relevance,
+			activity_focus = EXCLUDED.activity_focus,
+			action_type = EXCLUDED.action_type,
+			opportunity_alert = EXCLUDED.opportunity_alert,
+			created_at = NOW()
 		RETURNING id::text;
 	`
 
@@ -69,7 +85,7 @@ func (r *SignalRepository) SaveSignal(ctx context.Context, signal *ai.ExtractedS
 		ctx, query,
 		companyID, signal.CompanyName, signal.IndustrySector, sourceType, sourceURL, signal.Summary,
 		signal.CSRPillarFocus, signal.TargetRegions, signal.EstimatedBudgetSignal, signal.TriggerEvent,
-		signal.IntentScore, contentHash,
+		signal.IntentScore, contentHash, relevance, signal.ActivityFocus, signal.ActionType, signal.OpportunityAlert,
 	).Scan(&insertedID)
 
 	if err != nil {
@@ -79,61 +95,80 @@ func (r *SignalRepository) SaveSignal(ctx context.Context, signal *ai.ExtractedS
 	return insertedID, nil
 }
 
-// ListSignals retrieves a paginated list of corporate signals ordered by intent_score DESC.
-func (r *SignalRepository) ListSignals(ctx context.Context, limit, offset, minIntent int, industry string) ([]CorporateSignal, int, error) {
+// ListSignals retrieves a paginated list of corporate signals ordered by created_at DESC, intent_score DESC.
+func (r *SignalRepository) ListSignals(ctx context.Context, limit, offset, minIntent int, search, industry string) ([]CorporateSignal, int, error) {
 	if r.dbPool == nil {
-		return r.mockSignals(), 1, nil
+		return []CorporateSignal{}, 0, nil
 	}
 
-	countQuery := `SELECT COUNT(*) FROM intelligence.company_signals WHERE intent_score >= $1`
+	whereClause := "WHERE intent_score >= $1 AND summary IS NOT NULL AND summary != '' AND summary NOT ILIKE 'No %CSR%' AND summary NOT ILIKE 'No corporate %'"
+	args := []interface{}{minIntent}
+	argIdx := 2
+
+	if search != "" {
+		whereClause += fmt.Sprintf(" AND (company_name ILIKE $%d OR summary ILIKE $%d OR trigger_event ILIKE $%d OR activity_focus ILIKE $%d)", argIdx, argIdx, argIdx, argIdx)
+		args = append(args, "%"+strings.TrimSpace(search)+"%")
+		argIdx++
+	}
+
+	if industry != "" && industry != "ALL" && industry != "Semua Sektor" {
+		whereClause += fmt.Sprintf(" AND industry_sector ILIKE $%d", argIdx)
+		args = append(args, "%"+strings.TrimSpace(industry)+"%")
+		argIdx++
+	}
+
+	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM intelligence.company_signals %s", whereClause)
 	var total int
-	if err := r.dbPool.QueryRow(ctx, countQuery, minIntent).Scan(&total); err != nil {
-		return nil, 0, err
+	if err := r.dbPool.QueryRow(ctx, countQuery, args...).Scan(&total); err != nil {
+		return []CorporateSignal{}, 0, err
 	}
 
-	query := `
+	query := fmt.Sprintf(`
 		SELECT 
-			id::text, company_name, COALESCE(industry_sector, ''), source_type::text, COALESCE(source_url, ''),
+			id::text, company_name, COALESCE(industry_sector, ''), COALESCE(source_type::text, 'NEWS_RSS'), COALESCE(source_url, ''),
 			COALESCE(summary, ''), COALESCE(extracted_pillar, ''), COALESCE(target_regions, '{}'), 
 			COALESCE(estimated_budget_signal, 0), COALESCE(trigger_event, ''), intent_score, content_hash,
+			COALESCE(csr_relevance, 'HIGH'), COALESCE(activity_focus, ''), COALESCE(action_type, ''), COALESCE(opportunity_alert, false),
 			COALESCE(published_date, CURRENT_DATE), created_at
 		FROM intelligence.company_signals
-		WHERE intent_score >= $1
-		ORDER BY intent_score DESC, created_at DESC
-		LIMIT $2 OFFSET $3;
-	`
+		%s
+		ORDER BY created_at DESC, intent_score DESC
+		LIMIT $%d OFFSET $%d;
+	`, whereClause, argIdx, argIdx+1)
 
-	rows, err := r.dbPool.Query(ctx, query, minIntent, limit, offset)
+	args = append(args, limit, offset)
+
+	rows, err := r.dbPool.Query(ctx, query, args...)
 	if err != nil {
-		return nil, 0, fmt.Errorf("failed to query corporate signals: %w", err)
+		return []CorporateSignal{}, 0, fmt.Errorf("failed to query corporate signals: %w", err)
 	}
 	defer rows.Close()
 
-	var signals []CorporateSignal
+	signals := []CorporateSignal{}
 	for rows.Next() {
 		var s CorporateSignal
 		err := rows.Scan(
 			&s.ID, &s.CompanyName, &s.IndustrySector, &s.SourceType, &s.SourceURL,
 			&s.Summary, &s.ExtractedPillar, &s.TargetRegions, &s.EstimatedBudgetSignal,
-			&s.TriggerEvent, &s.IntentScore, &s.ContentHash, &s.PublishedDate, &s.CreatedAt,
+			&s.TriggerEvent, &s.IntentScore, &s.ContentHash,
+			&s.CSRRelevance, &s.ActivityFocus, &s.ActionType, &s.OpportunityAlert,
+			&s.PublishedDate, &s.CreatedAt,
 		)
 		if err != nil {
-			return nil, 0, err
+			fmt.Printf("[ListSignals Scan Error] %v\n", err)
+			return []CorporateSignal{}, 0, fmt.Errorf("failed to scan signal row: %w", err)
 		}
 		signals = append(signals, s)
 	}
 
-	if len(signals) == 0 {
-		return r.mockSignals(), 1, nil
-	}
-
+	fmt.Printf("[ListSignals Success] total count=%d, returned signals=%d\n", total, len(signals))
 	return signals, total, nil
 }
 
 // MatchTenantPrograms calculates cosine similarity between a corporate signal and private tenant programs.
 func (r *SignalRepository) MatchTenantPrograms(ctx context.Context, orgID, signalID string, limit int) ([]MatchedProgram, error) {
 	if r.dbPool == nil {
-		return r.mockMatches(), nil
+		return []MatchedProgram{}, nil
 	}
 
 	var matches []MatchedProgram
@@ -166,48 +201,10 @@ func (r *SignalRepository) MatchTenantPrograms(ctx context.Context, orgID, signa
 	})
 
 	if err != nil || len(matches) == 0 {
-		return r.mockMatches(), nil
+		return []MatchedProgram{}, nil
 	}
 
 	return matches, nil
 }
 
-func (r *SignalRepository) mockSignals() []CorporateSignal {
-	return []CorporateSignal{
-		{
-			ID:                    "sig_550e8400-e29b-41d4-a716-446655440000",
-			CompanyName:           "PT Maju Bersama Tbk",
-			IndustrySector:        "Telecommunication & Technology",
-			SourceType:            "BEI_REPORT",
-			SourceURL:             "https://www.idx.co.id/id/perusahaan-tercatat/laporan-keuangan-dan-tahunan/",
-			Summary:               "Perusahaan menganggarkan TJSL Rp 25 Miliar untuk digitalisasi pendidikan 3T.",
-			ExtractedPillar:       "Pendidikan",
-			TargetRegions:         []string{"Jawa Barat", "Nusa Tenggara Timur"},
-			EstimatedBudgetSignal: 25000000000,
-			TriggerEvent:          "Keterbukaan Laba Q2 & Ekspansi CSR",
-			IntentScore:           92,
-			ContentHash:           "d5b9a8712398a1",
-			PublishedDate:         time.Now(),
-			CreatedAt:             time.Now(),
-		},
-	}
-}
 
-func (r *SignalRepository) mockMatches() []MatchedProgram {
-	return []MatchedProgram{
-		{
-			ProgramID:       "prog_11a22b33-44c5-66d7-88e9-00f11a22b33c",
-			Title:           "Program Beasiswa Generasi Digital 3T",
-			AsnafCategory:   "Fisabilillah / Ibnu Sabil",
-			ESGPillar:       "Pendidikan (SDG 4)",
-			SimilarityScore: 0.8924,
-		},
-		{
-			ProgramID:       "prog_44c55d66-77e8-99f0-11a2-33b44c55d66e",
-			Title:           "Pemberdayaan SMK Vokasi Syariah",
-			AsnafCategory:   "Fakir / Miskin",
-			ESGPillar:       "Ekonomi & Pekerjaan Layak (SDG 8)",
-			SimilarityScore: 0.7412,
-		},
-	}
-}

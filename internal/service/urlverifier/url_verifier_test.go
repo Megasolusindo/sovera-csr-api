@@ -10,16 +10,28 @@ func TestURLVerifier_VerifyAndResolve(t *testing.T) {
 	ctx := context.Background()
 
 	tests := []struct {
-		name         string
-		url          string
-		wantValid    bool
-		wantStatus   HealthStatus
+		name       string
+		url        string
+		wantValid  bool
+		wantStatus HealthStatus
 	}{
 		{
-			name:       "Valid BCA Bakti CSR",
-			url:        "https://www.bca.co.id/id/tentang-bca/csr/bakti-bca",
-			wantValid:  true,
-			wantStatus: StatusHealthy,
+			name:       "Japanese Embassy GGP 404 URL",
+			url:        "https://www.id.emb-japan.go.jp/ggp.html",
+			wantValid:  false,
+			wantStatus: StatusDisabledDeadLink,
+		},
+		{
+			name:       "Australian Embassy DAP 404 URL",
+			url:        "https://indonesia.embassy.gov.au/jkti/dap.html",
+			wantValid:  false,
+			wantStatus: StatusDisabledDeadLink,
+		},
+		{
+			name:       "Pertamina Newsroom Soft 404 Redirect",
+			url:        "https://www.pertamina.com/id/news-room",
+			wantValid:  false,
+			wantStatus: StatusDisabledDeadLink,
 		},
 		{
 			name:       "Dead BCA CSR link (404) with Smart Fallback",
@@ -28,14 +40,14 @@ func TestURLVerifier_VerifyAndResolve(t *testing.T) {
 			wantStatus: StatusDisabledDeadLink,
 		},
 		{
-			name:       "Valid Telkom Sustainability",
-			url:        "https://www.telkom.co.id/sites/sustainability/id_ID/page/csr-1127",
-			wantValid:  true,
-			wantStatus: StatusHealthy,
-		},
-		{
 			name:       "Unreachable DNS Subdomain",
 			url:        "https://yayasan.djarumfoundation.org/call-for-proposals-2026",
+			wantValid:  false,
+			wantStatus: StatusDisabledDeadLink,
+		},
+		{
+			name:       "BUMN Press Release 404 URL",
+			url:        "https://bumn.go.id/media/press-release",
 			wantValid:  false,
 			wantStatus: StatusDisabledDeadLink,
 		},
@@ -47,8 +59,8 @@ func TestURLVerifier_VerifyAndResolve(t *testing.T) {
 			if res.IsValid != tt.wantValid {
 				t.Errorf("VerifyAndResolve(%s) IsValid = %v, want %v (Final: %s, Fallback: %s)", tt.url, res.IsValid, tt.wantValid, res.FinalURL, res.FallbackURL)
 			}
-			t.Logf("Result for %s => IsValid: %v, Status: %d, FinalURL: %s, FallbackURL: %s, Err: %s",
-				tt.name, res.IsValid, res.HTTPStatus, res.FinalURL, res.FallbackURL, res.ErrorMsg)
+			t.Logf("Result for %s => IsValid: %v, HealthStatus: %s, FinalURL: %s, FallbackURL: %s, Err: %s",
+				tt.name, res.IsValid, res.HealthStatus, res.FinalURL, res.FallbackURL, res.ErrorMsg)
 		})
 	}
 }

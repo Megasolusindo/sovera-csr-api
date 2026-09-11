@@ -43,20 +43,7 @@ func (r *ProgramRepository) CreateProgram(ctx context.Context, orgID, title, des
 	}
 
 	if r.dbPool == nil {
-		return &InstitutionProgram{
-			ID:                  "prog_mock_991823a",
-			OrgID:               orgID,
-			Title:               title,
-			Description:         description,
-			PrimaryCluster:      primaryCluster,
-			TargetSDGs:          sdgs,
-			AsnafCategory:       asnafCategory,
-			ESGPillar:           esgPillar,
-			TargetBeneficiaries: beneficiaries,
-			EmbeddingGenerated:  true,
-			CreatedAt:           time.Now(),
-			UpdatedAt:           time.Now(),
-		}, nil
+		return nil, fmt.Errorf("database pool is uninitialized")
 	}
 
 	var prog InstitutionProgram
@@ -87,7 +74,7 @@ func (r *ProgramRepository) CreateProgram(ctx context.Context, orgID, title, des
 // ListPrograms retrieves all institution programs belonging to the active tenant inside an RLS-enforced transaction.
 func (r *ProgramRepository) ListPrograms(ctx context.Context, orgID string) ([]InstitutionProgram, error) {
 	if r.dbPool == nil {
-		return r.mockPrograms(orgID), nil
+		return []InstitutionProgram{}, nil
 	}
 
 	var programs []InstitutionProgram
@@ -109,13 +96,12 @@ func (r *ProgramRepository) ListPrograms(ctx context.Context, orgID string) ([]I
 
 		for rows.Next() {
 			var p InstitutionProgram
-			err := rows.Scan(
+			if err := rows.Scan(
 				&p.ID, &p.OrgID, &p.Title, &p.Description,
 				&p.PrimaryCluster, &p.TargetSDGs,
 				&p.AsnafCategory, &p.ESGPillar, &p.TargetBeneficiaries,
 				&p.CreatedAt, &p.UpdatedAt,
-			)
-			if err != nil {
+			); err != nil {
 				return err
 			}
 			p.EmbeddingGenerated = true
@@ -124,8 +110,8 @@ func (r *ProgramRepository) ListPrograms(ctx context.Context, orgID string) ([]I
 		return nil
 	})
 
-	if err != nil || len(programs) == 0 {
-		return r.mockPrograms(orgID), nil
+	if err != nil {
+		return nil, fmt.Errorf("failed to list programs: %w", err)
 	}
 
 	return programs, nil
@@ -134,8 +120,7 @@ func (r *ProgramRepository) ListPrograms(ctx context.Context, orgID string) ([]I
 // GetProgramByID retrieves a single institution program inside an RLS-enforced transaction.
 func (r *ProgramRepository) GetProgramByID(ctx context.Context, orgID, programID string) (*InstitutionProgram, error) {
 	if r.dbPool == nil {
-		progs := r.mockPrograms(orgID)
-		return &progs[0], nil
+		return nil, fmt.Errorf("database pool is uninitialized")
 	}
 
 	var p InstitutionProgram
@@ -158,43 +143,9 @@ func (r *ProgramRepository) GetProgramByID(ctx context.Context, orgID, programID
 	})
 
 	if err != nil {
-		progs := r.mockPrograms(orgID)
-		return &progs[0], nil
+		return nil, fmt.Errorf("program not found: %w", err)
 	}
 
 	p.EmbeddingGenerated = true
 	return &p, nil
-}
-
-func (r *ProgramRepository) mockPrograms(orgID string) []InstitutionProgram {
-	return []InstitutionProgram{
-		{
-			ID:                  "prog_11a22b33-44c5-66d7-88e9-00f11a22b33c",
-			OrgID:               orgID,
-			Title:               "Program Beasiswa Generasi Digital 3T",
-			Description:         "Program penyediaan laptop, renovasi lab komputer, dan beasiswa pendidikan digital untuk siswa kurang mampu di daerah 3T.",
-			PrimaryCluster:      "Education & Literacy",
-			TargetSDGs:          []string{"SDG 4: Quality Education", "SDG 9: Industry & Innovation"},
-			AsnafCategory:       "Fisabilillah / Ibnu Sabil",
-			ESGPillar:           "SOCIAL",
-			TargetBeneficiaries: "5.000 Siswa Madrasah",
-			EmbeddingGenerated:  true,
-			CreatedAt:           time.Now(),
-			UpdatedAt:           time.Now(),
-		},
-		{
-			ID:                  "prog_44c55d66-77e8-99f0-11a2-33b44c55d66e",
-			OrgID:               orgID,
-			Title:               "Pemberdayaan SMK Vokasi Syariah & Tanggap Bencana",
-			Description:         "Pelatihan keterampilan teknis vokasi, respon cepat kebencanaan, dan sertifikasi industri untuk lulusan SMK di wilayah pedesaan.",
-			PrimaryCluster:      "Disaster & Emergency",
-			TargetSDGs:          []string{"SDG 1: No Poverty", "SDG 11: Sustainable Communities"},
-			AsnafCategory:       "Fakir / Miskin",
-			ESGPillar:           "SOCIAL",
-			TargetBeneficiaries: "1.200 Lulusan SMK",
-			EmbeddingGenerated:  true,
-			CreatedAt:           time.Now(),
-			UpdatedAt:           time.Now(),
-		},
-	}
 }

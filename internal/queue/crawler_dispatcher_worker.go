@@ -28,7 +28,7 @@ func NewCrawlerDispatcherHandler(crawlerRepo *repository.CrawlerRepository, disp
 func (h *CrawlerDispatcherHandler) HandleDispatchCrawlingTask(ctx context.Context, t *asynq.Task) error {
 	log.Println("Starting execution of periodic crawling target dispatching worker...")
 
-	dueTargets, err := h.crawlerRepo.GetDueTargets(ctx, 20)
+	dueTargets, err := h.crawlerRepo.GetDueTargets(ctx, 50)
 	if err != nil {
 		return fmt.Errorf("failed to fetch due crawling targets: %w", err)
 	}

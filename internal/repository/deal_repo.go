@@ -109,11 +109,7 @@ func (r *DealRepository) CreateDeal(ctx context.Context, orgID, signalID, compan
 // ListDeals retrieves all deal pipeline records belonging to the active tenant inside an RLS-enforced transaction.
 func (r *DealRepository) ListDeals(ctx context.Context, orgID string) ([]DealPipeline, error) {
 	if r.dbPool == nil {
-		deals := r.mockDeals(orgID)
-		for i := range deals {
-			r.ensureIcebreaker(&deals[i])
-		}
-		return deals, nil
+		return []DealPipeline{}, nil
 	}
 
 	var deals []DealPipeline
@@ -150,12 +146,8 @@ func (r *DealRepository) ListDeals(ctx context.Context, orgID string) ([]DealPip
 		return nil
 	})
 
-	if err != nil || len(deals) == 0 {
-		deals := r.mockDeals(orgID)
-		for i := range deals {
-			r.ensureIcebreaker(&deals[i])
-		}
-		return deals, nil
+	if err != nil {
+		return nil, fmt.Errorf("failed to list deals: %w", err)
 	}
 
 	return deals, nil
@@ -164,9 +156,7 @@ func (r *DealRepository) ListDeals(ctx context.Context, orgID string) ([]DealPip
 // GetDealByID retrieves a single deal record inside an RLS-enforced transaction.
 func (r *DealRepository) GetDealByID(ctx context.Context, orgID, dealID string) (*DealPipeline, error) {
 	if r.dbPool == nil {
-		deals := r.mockDeals(orgID)
-		r.ensureIcebreaker(&deals[0])
-		return &deals[0], nil
+		return nil, fmt.Errorf("database pool is uninitialized")
 	}
 
 	var d DealPipeline
@@ -189,9 +179,7 @@ func (r *DealRepository) GetDealByID(ctx context.Context, orgID, dealID string) 
 	})
 
 	if err != nil {
-		deals := r.mockDeals(orgID)
-		r.ensureIcebreaker(&deals[0])
-		return &deals[0], nil
+		return nil, fmt.Errorf("deal not found: %w", err)
 	}
 
 	r.ensureIcebreaker(&d)
@@ -201,10 +189,7 @@ func (r *DealRepository) GetDealByID(ctx context.Context, orgID, dealID string) 
 // UpdateDealStage updates the pipeline stage of a deal inside an RLS-enforced transaction.
 func (r *DealRepository) UpdateDealStage(ctx context.Context, orgID, dealID, newStage string) (*DealPipeline, error) {
 	if r.dbPool == nil {
-		d := r.mockDeals(orgID)[0]
-		d.DealStage = newStage
-		d.UpdatedAt = time.Now()
-		return &d, nil
+		return nil, fmt.Errorf("database pool is uninitialized")
 	}
 
 	cleanOrgID := strings.TrimPrefix(orgID, "org_")
@@ -231,12 +216,7 @@ func (r *DealRepository) UpdateDealStage(ctx context.Context, orgID, dealID, new
 	})
 
 	if err != nil {
-		// Fallback for mock deal IDs or unpersisted demo items
-		d := r.mockDeals(orgID)[0]
-		d.ID = dealID
-		d.DealStage = newStage
-		d.UpdatedAt = time.Now()
-		return &d, nil
+		return nil, fmt.Errorf("failed to update deal stage: %w", err)
 	}
 
 	return &d, nil
@@ -245,7 +225,7 @@ func (r *DealRepository) UpdateDealStage(ctx context.Context, orgID, dealID, new
 // UpdateDealPitch saves the LLM generated pitch outputs inside an RLS-enforced transaction.
 func (r *DealRepository) UpdateDealPitch(ctx context.Context, orgID, dealID, icebreaker, proposalMarkdown string) error {
 	if r.dbPool == nil {
-		return nil
+		return fmt.Errorf("database pool is uninitialized")
 	}
 
 	return WithTenantContext(ctx, r.dbPool, orgID, func(tx pgx.Tx) error {
@@ -257,23 +237,4 @@ func (r *DealRepository) UpdateDealPitch(ctx context.Context, orgID, dealID, ice
 		_, err := tx.Exec(ctx, query, icebreaker, proposalMarkdown, dealID)
 		return err
 	})
-}
-
-func (r *DealRepository) mockDeals(orgID string) []DealPipeline {
-	return []DealPipeline{
-		{
-			ID:                  "deal_7781a-9921-4c12-881a-00123456789a",
-			OrgID:               orgID,
-			SignalID:            "sig_550e8400-e29b-41d4-a716-446655440000",
-			CompanyName:         "PT Maju Bersama Tbk",
-			DealStage:           "DISCOVERED",
-			EstimatedValue:      500000000,
-			TargetProgramID:     "prog_11a22b33-44c5-66d7-88e9-00f11a22b33c",
-			TargetProgramName:   "Program Beasiswa Vokasi & Digital 3T",
-			GeneratedIcebreaker: "Yth. Pimpinan TJSL PT Maju Bersama Tbk,\n\nMenyikapi inisiatif luar biasa korporasi dalam penguatan infrastruktur digital di 3T...",
-			GeneratedProposal:   "# PROPOSAL KEMITRAAN STRATEGIS\n\n## Ringkasan Eksekutif...",
-			CreatedAt:           time.Now(),
-			UpdatedAt:           time.Now(),
-		},
-	}
 }

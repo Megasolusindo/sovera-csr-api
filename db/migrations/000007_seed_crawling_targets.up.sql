@@ -15,7 +15,7 @@ VALUES
     ('Republika Online RSS - Filantropi & Zakat Korporasi', 'NEWS_RSS', 'https://www.republika.co.id/rss/ekonomi/syariah-filantropi', 4, true, NULL),
 
     -- 3. Portal Resmi BUMN & Press Release Korporasi
-    ('Kementerian BUMN - Siaran Pers TJSL', 'BUMN_PORTAL', 'https://bumn.go.id/media/press-release', 12, true, NULL),
+    ('Kementerian BUMN - Siaran Pers TJSL', 'BUMN_PORTAL', 'https://bumn.go.id/publikasi/berita/rilis', 12, true, NULL),
     ('Pertamina Newsroom - CSR & TJSL Updates', 'NEWS_ARTICLE', 'https://www.pertamina.com/id/news-room', 12, true, NULL),
     ('PLN Newsroom - Program CSR & Desa Berdaya', 'NEWS_ARTICLE', 'https://web.pln.co.id/media/siaran-pers', 12, true, NULL),
     ('Pelindo TJSL & Social Impact Newsroom', 'NEWS_ARTICLE', 'https://pelindo.co.id/media/berita', 12, true, NULL),

@@ -72,3 +72,56 @@ func (r *UserRepository) Create(ctx context.Context, u model.User) (*model.User,
 	}
 	return &created, nil
 }
+
+type UserWithOrgItem struct {
+	model.User
+	OrgName string `json:"org_name" db:"org_name"`
+}
+
+// ListAllUsers retrieves user accounts across all tenant organizations.
+func (r *UserRepository) ListAllUsers(ctx context.Context, page, pageSize int) ([]UserWithOrgItem, int, error) {
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 || pageSize > 100 {
+		pageSize = 20
+	}
+	offset := (page - 1) * pageSize
+
+	var total int
+	err := r.pool.QueryRow(ctx, "SELECT COUNT(*) FROM users").Scan(&total)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to count users: %w", err)
+	}
+
+	query := `
+		SELECT 
+			u.id, u.org_id, u.email, u.full_name, u.role, u.is_active, u.created_at, u.updated_at,
+			COALESCE(o.name, 'System') AS org_name
+		FROM users u
+		LEFT JOIN organizations o ON o.id = u.org_id
+		ORDER BY u.created_at DESC
+		LIMIT $1 OFFSET $2;
+	`
+
+	rows, err := r.pool.Query(ctx, query, pageSize, offset)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to list users: %w", err)
+	}
+	defer rows.Close()
+
+	items := []UserWithOrgItem{}
+	for rows.Next() {
+		var item UserWithOrgItem
+		if err := rows.Scan(
+			&item.ID, &item.OrgID, &item.Email, &item.FullName, &item.Role, &item.IsActive,
+			&item.CreatedAt, &item.UpdatedAt, &item.OrgName,
+		); err != nil {
+			return nil, 0, fmt.Errorf("failed to scan user row: %w", err)
+		}
+		items = append(items, item)
+	}
+
+	return items, total, nil
+}
+

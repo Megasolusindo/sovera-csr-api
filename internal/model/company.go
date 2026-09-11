@@ -11,6 +11,7 @@ type Company struct {
 	IndustrySector  string    `json:"industry_sector"`
 	CompanyType     string    `json:"company_type"`
 	Website         *string   `json:"website,omitempty"`
+	Phone           *string   `json:"phone,omitempty"`
 	LinkedinURL     *string   `json:"linkedin_url,omitempty"`
 	Headquarters    *string   `json:"headquarters,omitempty"`
 	EmployeeRange   *string   `json:"employee_range,omitempty"`

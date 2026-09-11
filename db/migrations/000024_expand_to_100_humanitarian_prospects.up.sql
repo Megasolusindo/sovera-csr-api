@@ -1,0 +1,114 @@
+-- Migration 000024: Expand Prospective Humanitarian Institutions & LAZ Users to 100+ National Entities
+
+-- Seed 78 Additional Official National Humanitarian Institutions, LAZ, & ESG Foundations into organizations table
+INSERT INTO organizations (id, name, org_type, subscription_tier, account_status) VALUES
+-- LAZNAS & Pengelola Zakat Resmi Kemenag/BAZNAS
+('b1000000-0000-4000-a000-000000000026', 'BAZNAS RI (Badan Amil Zakat Nasional)', 'ZAKAT_WAQF_INSTITUTION', 'ENTERPRISE', 'PROSPECT'),
+('b1000000-0000-4000-a000-000000000027', 'LAZ Baitul Maal Muamalat (BMM)', 'ZAKAT_WAQF_INSTITUTION', 'ENTERPRISE', 'PROSPECT'),
+('b1000000-0000-4000-a000-000000000028', 'LAZNAS Nurul Hayat (Zakat Kita)', 'ZAKAT_WAQF_INSTITUTION', 'PRO', 'PROSPECT'),
+('b1000000-0000-4000-a000-000000000029', 'LAZ Rumah Yatim Ar-Rohman Indonesia', 'ZAKAT_WAQF_INSTITUTION', 'PRO', 'PROSPECT'),
+('b1000000-0000-4000-a000-000000000030', 'LAZNAS PHR (Pertamina Hulu Rokan)', 'ZAKAT_WAQF_INSTITUTION', 'ENTERPRISE', 'PROSPECT'),
+('b1000000-0000-4000-a000-000000000031', 'LAZ Zakat Sukses Depok', 'ZAKAT_WAQF_INSTITUTION', 'FREE_TRIAL', 'PROSPECT'),
+('b1000000-0000-4000-a000-000000000032', 'LAZ Harapan Dhuafa (LAZ Harfa Banten)', 'ZAKAT_WAQF_INSTITUTION', 'PRO', 'PROSPECT'),
+('b1000000-0000-4000-a000-000000000033', 'LAZ Kilau Indonesia', 'ZAKAT_WAQF_INSTITUTION', 'FREE_TRIAL', 'PROSPECT'),
+('b1000000-0000-4000-a000-000000000034', 'LAZ Dewan Da''wah Islamiyah Indonesia', 'ZAKAT_WAQF_INSTITUTION', 'PRO', 'PROSPECT'),
+('b1000000-0000-4000-a000-000000000035', 'Yayasan Dana Sosial Al-Falah (YDSF)', 'ZAKAT_WAQF_INSTITUTION', 'PRO', 'PROSPECT'),
+('b1000000-0000-4000-a000-000000000036', 'LAZ Sidogiri (Baitul Maal wa Tamwil)', 'ZAKAT_WAQF_INSTITUTION', 'ENTERPRISE', 'PROSPECT'),
+('b1000000-0000-4000-a000-000000000037', 'LAZ Al-Ihsan Jawa Tengah', 'ZAKAT_WAQF_INSTITUTION', 'PRO', 'PROSPECT'),
+('b1000000-0000-4000-a000-000000000038', 'LAZ Dompet Sosial Madani (DSM Bali)', 'ZAKAT_WAQF_INSTITUTION', 'FREE_TRIAL', 'PROSPECT'),
+('b1000000-0000-4000-a000-000000000039', 'LAZ DPU Kalimantan', 'ZAKAT_WAQF_INSTITUTION', 'PRO', 'PROSPECT'),
+('b1000000-0000-4000-a000-000000000040', 'LAZ Ulul Albab Medan', 'ZAKAT_WAQF_INSTITUTION', 'FREE_TRIAL', 'PROSPECT'),
+
+-- Lembaga Kemanusiaan, Kebencanaan & Kesehatan Nasional
+('b1000000-0000-4000-a000-000000000041', 'doctorSHARE (Yayasan Dokter Peduli)', 'HUMANITARIAN_NGO', 'ENTERPRISE', 'PROSPECT'),
+('b1000000-0000-4000-a000-000000000042', 'Yayasan Pita Kuning Anak Indonesia', 'HUMANITARIAN_NGO', 'PRO', 'PROSPECT'),
+('b1000000-0000-4000-a000-000000000043', 'Yayasan Kasih Anak Kanker Indonesia (YKAKI)', 'HUMANITARIAN_NGO', 'PRO', 'PROSPECT'),
+('b1000000-0000-4000-a000-000000000044', 'Cancer Information & Support Center (CISC)', 'HUMANITARIAN_NGO', 'FREE_TRIAL', 'PROSPECT'),
+('b1000000-0000-4000-a000-000000000045', 'Yayasan Pembinaan Anak Cacat (YPAC Nasional)', 'HUMANITARIAN_NGO', 'PRO', 'PROSPECT'),
+('b1000000-0000-4000-a000-000000000046', 'Yayasan Sayap Ibu Indonesia', 'HUMANITARIAN_NGO', 'PRO', 'PROSPECT'),
+('b1000000-0000-4000-a000-000000000047', 'SOS Children''s Villages Indonesia', 'HUMANITARIAN_NGO', 'ENTERPRISE', 'PROSPECT'),
+('b1000000-0000-4000-a000-000000000048', 'Yayasan Buddha Tzu Chi Indonesia', 'HUMANITARIAN_NGO', 'ENTERPRISE', 'PROSPECT'),
+('b1000000-0000-4000-a000-000000000049', 'Islamic Relief Worldwide Indonesia', 'HUMANITARIAN_NGO', 'ENTERPRISE', 'PROSPECT'),
+('b1000000-0000-4000-a000-000000000050', 'Caritas Indonesia (KARINA KWI)', 'HUMANITARIAN_NGO', 'PRO', 'PROSPECT'),
+('b1000000-0000-4000-a000-000000000051', 'ADRA Indonesia (Adventist Development Agency)', 'HUMANITARIAN_NGO', 'PRO', 'PROSPECT'),
+('b1000000-0000-4000-a000-000000000052', 'Yayasan Lentera Anak', 'HUMANITARIAN_NGO', 'FREE_TRIAL', 'PROSPECT'),
+('b1000000-0000-4000-a000-000000000053', 'Disaster Oasis Indonesia', 'HUMANITARIAN_NGO', 'PRO', 'PROSPECT'),
+('b1000000-0000-4000-a000-000000000054', 'Yayasan Ambulans Gawat Darurat (AGD)', 'HUMANITARIAN_NGO', 'FREE_TRIAL', 'PROSPECT'),
+('b1000000-0000-4000-a000-000000000055', 'Yayasan Senyum Anak Nusantara', 'HUMANITARIAN_NGO', 'FREE_TRIAL', 'PROSPECT'),
+
+-- Fasilitator B2B CSR & Social Enterprise
+('b1000000-0000-4000-a000-000000000056', 'Indorelawan (Yayasan Ridho Sahabat)', 'CSR_IMPLEMENTER', 'PRO', 'PROSPECT'),
+('b1000000-0000-4000-a000-000000000057', 'GandengTangan (Yayasan Kreasi Putra)', 'CSR_IMPLEMENTER', 'PRO', 'PROSPECT'),
+('b1000000-0000-4000-a000-000000000058', 'Yayasan Pemuda Peduli Indonesia', 'CSR_IMPLEMENTER', 'FREE_TRIAL', 'PROSPECT'),
+('b1000000-0000-4000-a000-000000000059', 'Social Investment Indonesia (SII Hub)', 'CSR_IMPLEMENTER', 'ENTERPRISE', 'PROSPECT'),
+('b1000000-0000-4000-a000-000000000060', 'Center for CSR Development Indonesia', 'CSR_IMPLEMENTER', 'PRO', 'PROSPECT'),
+('b1000000-0000-4000-a000-000000000061', 'Yayasan Inspirasi Usaha Bersama', 'CSR_IMPLEMENTER', 'FREE_TRIAL', 'PROSPECT'),
+
+-- Yayasan Filantropi & ESG Environmental Preservation
+('b1000000-0000-4000-a000-000000000062', 'Greenpeace Indonesia Foundation', 'COMMUNITY_ORG', 'PRO', 'PROSPECT'),
+('b1000000-0000-4000-a000-000000000063', 'WALHI (Wahana Lingkungan Hidup Indonesia)', 'COMMUNITY_ORG', 'ENTERPRISE', 'PROSPECT'),
+('b1000000-0000-4000-a000-000000000064', 'Conservation International Indonesia (CI)', 'COMMUNITY_ORG', 'ENTERPRISE', 'PROSPECT'),
+('b1000000-0000-4000-a000-000000000065', 'Yayasan Belantara Indonesia', 'FOUNDATION', 'ENTERPRISE', 'PROSPECT'),
+('b1000000-0000-4000-a000-000000000066', 'Borneo Orangutan Survival Foundation (BOSF)', 'COMMUNITY_ORG', 'ENTERPRISE', 'PROSPECT'),
+('b1000000-0000-4000-a000-000000000067', 'Yayasan Terumbu Karang Indonesia (TERANGI)', 'COMMUNITY_ORG', 'PRO', 'PROSPECT'),
+('b1000000-0000-4000-a000-000000000068', 'Yayasan Ecosystem Restoration Riau', 'FOUNDATION', 'ENTERPRISE', 'PROSPECT'),
+('b1000000-0000-4000-a000-000000000069', 'Yayasan Flora Fauna Indonesia', 'COMMUNITY_ORG', 'PRO', 'PROSPECT'),
+('b1000000-0000-4000-a000-000000000070', 'Yayasan Keanekaragaman Hayati Laut (KEHATI)', 'FOUNDATION', 'ENTERPRISE', 'PROSPECT'),
+
+-- Yayasan Filantropi Korporasi Utama
+('b1000000-0000-4000-a000-000000000071', 'Tanoto Foundation', 'FOUNDATION', 'ENTERPRISE', 'PROSPECT'),
+('b1000000-0000-4000-a000-000000000072', 'Yayasan Tahija Indonesia', 'FOUNDATION', 'ENTERPRISE', 'PROSPECT'),
+('b1000000-0000-4000-a000-000000000073', 'Yayasan Adaro Bangun Negeri (YABN)', 'FOUNDATION', 'ENTERPRISE', 'PROSPECT'),
+('b1000000-0000-4000-a000-000000000074', 'Yayasan Bakti Barito', 'FOUNDATION', 'ENTERPRISE', 'PROSPECT'),
+('b1000000-0000-4000-a000-000000000075', 'Yayasan Astra Honda Motor', 'FOUNDATION', 'ENTERPRISE', 'PROSPECT'),
+('b1000000-0000-4000-a000-000000000076', 'Yayasan Wings Sehati', 'FOUNDATION', 'PRO', 'PROSPECT'),
+('b1000000-0000-4000-a000-000000000077', 'Yayasan Hati Suci Jakarta', 'FOUNDATION', 'PRO', 'PROSPECT'),
+
+-- Organisasi Filantropi Pendidikan & Pemberdayaan Sektor Tambahan
+('b1000000-0000-4000-a000-000000000078', 'Yayasan Indonesia Mengajar', 'HUMANITARIAN_NGO', 'ENTERPRISE', 'PROSPECT'),
+('b1000000-0000-4000-a000-000000000079', 'Yayasan Pengajar Muda Nusantara', 'HUMANITARIAN_NGO', 'PRO', 'PROSPECT'),
+('b1000000-0000-4000-a000-000000000080', 'Yayasan Gerakan Indonesia Bekerja', 'HUMANITARIAN_NGO', 'PRO', 'PROSPECT'),
+('b1000000-0000-4000-a000-000000000081', 'Yayasan Sahabat Anak', 'HUMANITARIAN_NGO', 'PRO', 'PROSPECT'),
+('b1000000-0000-4000-a000-000000000082', 'Yayasan Sanggar Anak Akar', 'HUMANITARIAN_NGO', 'FREE_TRIAL', 'PROSPECT'),
+('b1000000-0000-4000-a000-000000000083', 'Yayasan Kampung Halaman', 'COMMUNITY_ORG', 'PRO', 'PROSPECT'),
+('b1000000-0000-4000-a000-000000000084', 'Yayasan Rumah Pintar Indonesia', 'HUMANITARIAN_NGO', 'FREE_TRIAL', 'PROSPECT'),
+('b1000000-0000-4000-a000-000000000085', 'Yayasan Bina Swadaya', 'FOUNDATION', 'ENTERPRISE', 'PROSPECT'),
+('b1000000-0000-4000-a000-000000000086', 'Yayasan PEKKA (Pemberdayaan Perempuan)', 'HUMANITARIAN_NGO', 'PRO', 'PROSPECT'),
+('b1000000-0000-4000-a000-000000000087', 'Yayasan KAPAL Perempuan', 'HUMANITARIAN_NGO', 'PRO', 'PROSPECT'),
+('b1000000-0000-4000-a000-000000000088', 'Yayasan Rahima Indonesia', 'HUMANITARIAN_NGO', 'FREE_TRIAL', 'PROSPECT'),
+('b1000000-0000-4000-a000-000000000089', 'Yayasan Sikola Mombine', 'COMMUNITY_ORG', 'FREE_TRIAL', 'PROSPECT'),
+('b1000000-0000-4000-a000-000000000090', 'Yayasan Rumah Tumbuh Indonesia', 'HUMANITARIAN_NGO', 'FREE_TRIAL', 'PROSPECT'),
+('b1000000-0000-4000-a000-000000000091', 'Yayasan Swandiri Institute', 'FOUNDATION', 'PRO', 'PROSPECT'),
+('b1000000-0000-4000-a000-000000000092', 'Yayasan Hutan Kita Enim', 'COMMUNITY_ORG', 'FREE_TRIAL', 'PROSPECT'),
+('b1000000-0000-4000-a000-000000000093', 'Yayasan Jaringan Masyarakat Gambut', 'COMMUNITY_ORG', 'PRO', 'PROSPECT'),
+('b1000000-0000-4000-a000-000000000094', 'Yayasan Aliansi Masyarakat Adat (AMAMAN)', 'COMMUNITY_ORG', 'ENTERPRISE', 'PROSPECT'),
+('b1000000-0000-4000-a000-000000000095', 'Yayasan Lembaga Studi Kebijakan Publik', 'FOUNDATION', 'PRO', 'PROSPECT'),
+('b1000000-0000-4000-a000-000000000096', 'Yayasan Lembaga Konsumen Indonesia (YLKI)', 'FOUNDATION', 'ENTERPRISE', 'PROSPECT'),
+('b1000000-0000-4000-a000-000000000097', 'Yayasan Pusat Kaji Kelautan (Center for Maritime)', 'FOUNDATION', 'PRO', 'PROSPECT'),
+('b1000000-0000-4000-a000-000000000098', 'Yayasan Pertanian Berkelanjutan Indonesia', 'FOUNDATION', 'PRO', 'PROSPECT'),
+('b1000000-0000-4000-a000-000000000099', 'Yayasan Pembangunan Berkelanjutan (YPB)', 'FOUNDATION', 'ENTERPRISE', 'PROSPECT'),
+('b1000000-0000-4000-a000-000000000100', 'Yayasan Filantropi Indonesia (Hub Central)', 'FOUNDATION', 'ENTERPRISE', 'PROSPECT'),
+('b1000000-0000-4000-a000-000000000101', 'Forum Zakat (FOZ Indonesia Central)', 'ZAKAT_WAQF_INSTITUTION', 'ENTERPRISE', 'PROSPECT'),
+('b1000000-0000-4000-a000-000000000102', 'Yayasan Social Resilience Indonesia', 'HUMANITARIAN_NGO', 'PRO', 'PROSPECT'),
+('b1000000-0000-4000-a000-000000000103', 'Yayasan Indonesia Bright Future', 'HUMANITARIAN_NGO', 'PRO', 'PROSPECT')
+ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, org_type = EXCLUDED.org_type, subscription_tier = EXCLUDED.subscription_tier, account_status = EXCLUDED.account_status;
+
+-- Seed matching CRM prospect entries into organization_prospects table
+INSERT INTO organization_prospects (id, org_id, sales_status, lead_score, source)
+SELECT 
+    gen_random_uuid(),
+    id,
+    'QUALIFIED',
+    CASE 
+        WHEN subscription_tier = 'ENTERPRISE' THEN 95.00
+        WHEN subscription_tier = 'PRO' THEN 88.00
+        ELSE 78.00
+    END,
+    CASE 
+        WHEN org_type = 'ZAKAT_WAQF_INSTITUTION' THEN 'KEMENAG_REGISTRY'
+        WHEN org_type = 'CSR_IMPLEMENTER' THEN 'FILANTROPI_ID'
+        ELSE 'NATIONAL_NGO_DIRECTORY'
+    END
+FROM organizations 
+WHERE id::text LIKE 'b1000000-0000-4000-a000-0000000000%'
+ON CONFLICT (org_id) DO NOTHING;

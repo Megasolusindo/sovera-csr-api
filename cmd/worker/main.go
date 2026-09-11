@@ -45,9 +45,11 @@ func main() {
 	dispatcher := crawler.NewDispatcher(cfg)
 	companyEnricher := companyenricher.NewEnricherService(companyRepo, dispatcher)
 
-	extractionWorker := queue.NewExtractionWorker(geminiService, signalRepo, textNormalizer, entityResolver, esgExtractor)
+	tokenLogRepo := repository.NewTokenLogRepository(dbPool)
+	extractionWorker := queue.NewExtractionWorker(geminiService, signalRepo, textNormalizer, entityResolver, esgExtractor, tokenLogRepo)
 	dispatcherWorker := queue.NewCrawlerDispatcherHandler(crawlerRepo, dispatcher)
 	enrichmentWorker := queue.NewCompanyEnrichmentWorker(companyEnricher)
+	healthCheckWorker := queue.NewURLHealthCheckWorker(dbPool)
 
 	// 3. Asynq Scheduler for Periodic Tasks
 	scheduler := asynq.NewScheduler(
@@ -77,8 +79,8 @@ func main() {
 		}
 		startupClient.Close()
 
-		// Register periodic cron to run every 1 hour (cron: "0 * * * *")
-		if entryID, err := scheduler.Register("0 * * * *", dispatchTask); err != nil {
+		// Register periodic cron to run every 2 minutes (cron: "*/2 * * * *")
+		if entryID, err := scheduler.Register("*/2 * * * *", dispatchTask); err != nil {
 			log.Printf("Warning: Could not register periodic crawling dispatch cron: %v", err)
 		} else {
 			log.Printf("Registered periodic crawling dispatch cron with entry ID: %s", entryID)
@@ -95,6 +97,16 @@ func main() {
 		}
 	}
 
+	// Schedule task:url_health_check every 5 minutes (cron: "*/5 * * * *")
+	healthCheckTask, err := queue.NewURLHealthCheckTask()
+	if err == nil {
+		if entryID, err := scheduler.Register("*/5 * * * *", healthCheckTask); err != nil {
+			log.Printf("Warning: Could not register URL health check cron: %v", err)
+		} else {
+			log.Printf("Registered URL health check cron with entry ID: %s", entryID)
+		}
+	}
+
 	go func() {
 		if err := scheduler.Run(); err != nil {
 			log.Printf("Scheduler error: %v", err)
@@ -107,13 +119,14 @@ func main() {
 		asynq.Config{
 			Concurrency: 10,
 			Queues: map[string]int{
-				queue.QueueDispatchCrawling:   10,
-				queue.QueuePollPendingTasks:   5,
+				queue.QueueDispatchCrawling:      10,
+				queue.QueuePollPendingTasks:      5,
 				queue.QueueEnrichMissingWebsites: 5,
-				queue.QueueRawIngestion:       10,
-				queue.QueueLLMExtraction:      5,
-				queue.QueueESGExtraction:      5,
-				queue.QueueProposalGeneration: 3,
+				queue.QueueURLHealthCheck:        2,
+				queue.QueueRawIngestion:          10,
+				queue.QueueLLMExtraction:         5,
+				queue.QueueESGExtraction:         5,
+				queue.QueueProposalGeneration:    3,
 			},
 		},
 	)
@@ -126,6 +139,7 @@ func main() {
 	mux.HandleFunc(queue.TypeEnrichMissingWebsites, enrichmentWorker.HandleEnrichMissingWebsites)
 	mux.HandleFunc(queue.TypeLLMExtraction, extractionWorker.ProcessExtractionTask)
 	mux.HandleFunc(queue.TypeESGExtraction, extractionWorker.ProcessESGTask)
+	mux.HandleFunc(queue.TypeURLHealthCheck, healthCheckWorker.HandleURLHealthCheck)
 
 	log.Println("Asynq Worker server listening for queue jobs...")
 	if err := srv.Run(mux); err != nil {

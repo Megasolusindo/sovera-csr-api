@@ -18,6 +18,7 @@ import (
 	"sovera-core-api/internal/config"
 	"sovera-core-api/internal/handler"
 	"sovera-core-api/internal/middleware"
+	"sovera-core-api/internal/queue"
 	"sovera-core-api/internal/repository"
 	"sovera-core-api/internal/service/ai"
 	"sovera-core-api/internal/service/exporter"
@@ -64,8 +65,12 @@ func main() {
 	dealRepo := repository.NewDealRepository(dbPool)
 	userRepo := repository.NewUserRepository(dbPool)
 	companyRepo := repository.NewCompanyRepository(dbPool)
+	companyCSRProgramRepo := repository.NewCompanyCSRProgramRepository(dbPool)
+	esgProfileRepo := repository.NewESGProfileRepository(dbPool)
 	templateRepo := repository.NewTemplateRepository(dbPool)
 	tokenLogRepo := repository.NewTokenLogRepository(dbPool)
+	orgRepo := repository.NewOrganizationRepository(dbPool)
+	crawlerRepo := repository.NewCrawlerRepository(dbPool)
 
 	// 5. Create Fiber Web Application
 	app := fiber.New(fiber.Config{
@@ -94,8 +99,9 @@ func main() {
 	programHandler := handler.NewProgramHandler(programRepo, geminiService)
 	dealHandler := handler.NewDealHandler(dealRepo, programRepo, signalRepo, templateRepo, tokenLogRepo, storageService, geminiService, docExporter)
 	authHandler := handler.NewAuthHandler(userRepo, cfg.JWTSecret)
-	companyHandler := handler.NewCompanyHandler(companyRepo)
+	companyHandler := handler.NewCompanyHandler(companyRepo, companyCSRProgramRepo)
 	templateHandler := handler.NewTemplateHandler(templateRepo, tokenLogRepo, storageService)
+	adminHandler := handler.NewAdminHandler(orgRepo, userRepo, crawlerRepo, tokenLogRepo, esgProfileRepo, dbPool)
 
 	// Root & Health check routes (public)
 	app.Get("/health", healthHandler.HealthCheck)
@@ -107,6 +113,7 @@ func main() {
 	auth := apiV1.Group("/auth")
 	auth.Post("/register", authHandler.Register)
 	auth.Post("/login", authHandler.Login)
+	auth.Post("/logout", authHandler.Logout)
 	auth.Get("/me", middleware.AuthenticateJWT(cfg.JWTSecret), authHandler.Me)
 
 	// ─── Webhook Ingestion (Protected by HMAC Verification) ──────────────────
@@ -119,9 +126,53 @@ func main() {
 	// ─── JWT-Protected Routes ─────────────────────────────────────────────────
 	jwtGuard := middleware.AuthenticateJWT(cfg.JWTSecret)
 
-	// Companies Directory — semua role / public browsing
+	// Platform Admin Console — Full System Control & Analytics
+	adminGroup := apiV1.Group("/admin")
+	adminGroup.Get("/organizations", adminHandler.ListOrganizations)
+	adminGroup.Post("/organizations", adminHandler.CreateOrganization)
+	adminGroup.Put("/organizations/:id", adminHandler.UpdateOrganization)
+	adminGroup.Patch("/organizations/:id", adminHandler.UpdateOrganization)
+	adminGroup.Get("/users", adminHandler.ListUsers)
+	adminGroup.Get("/scraping-jobs", adminHandler.ListScrapingJobs)
+	adminGroup.Post("/scraping-jobs", adminHandler.CreateScrapingJob)
+	adminGroup.Get("/sources", adminHandler.ListSources)
+	adminGroup.Post("/sources", adminHandler.CreateScrapingJob)
+	adminGroup.Get("/documents", adminHandler.ListDocuments)
+	adminGroup.Get("/esg-intelligence", adminHandler.GetESGIntelligence)
+	adminGroup.Get("/analytics", adminHandler.GetAnalytics)
+	adminGroup.Get("/ai-metering", adminHandler.GetAIMetering)
+	adminGroup.Post("/idx-sync", adminHandler.TriggerIDXSync)
+	adminGroup.Post("/health-check", func(c *fiber.Ctx) error {
+		task, err := queue.NewURLHealthCheckTask()
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+		}
+		asynqClient := asynq.NewClient(asynq.RedisClientOpt{Addr: cfg.RedisURL})
+		defer asynqClient.Close()
+		info, err := asynqClient.Enqueue(task)
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+		}
+		return c.JSON(fiber.Map{
+			"message": "URL health check task enqueued",
+			"task_id": info.ID,
+		})
+	})
+
+	// Companies Directory & CSR Master Programs & Web Sources & ESG — semua role / public browsing
+	apiV1.Get("/stats", adminHandler.GetAnalytics)
 	apiV1.Get("/companies", companyHandler.ListCompanies)
+	apiV1.Post("/companies", companyHandler.CreateCompany)
+	apiV1.Get("/companies/csr-programs", companyHandler.ListCSRPrograms)
+	apiV1.Get("/csr-programs", companyHandler.ListCSRPrograms)
+	apiV1.Get("/sources", adminHandler.ListSources)
+	apiV1.Post("/sources", adminHandler.CreateScrapingJob)
+	apiV1.Get("/documents", adminHandler.ListDocuments)
+	apiV1.Get("/scraping-jobs", adminHandler.ListScrapingJobs)
+	apiV1.Post("/scraping-jobs", adminHandler.CreateScrapingJob)
+	apiV1.Get("/esg-intelligence", adminHandler.GetESGIntelligence)
 	apiV1.Get("/companies/:id", companyHandler.GetCompany)
+
 
 	// Corporate Intelligence Feeds — semua role
 	apiV1.Get("/signals", jwtGuard, signalHandler.ListSignals)

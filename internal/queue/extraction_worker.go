@@ -22,6 +22,7 @@ type ExtractionWorker struct {
 	normalizer     *normalizer.Normalizer
 	entityResolver *entityresolver.EntityResolver
 	esgExtractor   *esgextractor.ESGExtractor
+	tokenLogRepo   *repository.TokenLogRepository
 }
 
 func NewExtractionWorker(
@@ -30,6 +31,7 @@ func NewExtractionWorker(
 	norm *normalizer.Normalizer,
 	resolver *entityresolver.EntityResolver,
 	esgExt *esgextractor.ESGExtractor,
+	tokenLogRepo *repository.TokenLogRepository,
 ) *ExtractionWorker {
 	if norm == nil {
 		norm = normalizer.NewNormalizer()
@@ -40,6 +42,7 @@ func NewExtractionWorker(
 		normalizer:     norm,
 		entityResolver: resolver,
 		esgExtractor:   esgExt,
+		tokenLogRepo:   tokenLogRepo,
 	}
 }
 
@@ -57,6 +60,16 @@ func (w *ExtractionWorker) ProcessExtractionTask(ctx context.Context, task *asyn
 	extractedSignal, err := w.geminiService.ExtractCorporateSignal(ctx, textToExtract)
 	if err != nil {
 		return fmt.Errorf("LLM signal extraction failed: %w", err)
+	}
+
+	// Log AI token usage to crm.ai_token_logs
+	if w.tokenLogRepo != nil {
+		promptTokens := len(textToExtract) / 4
+		if promptTokens < 50 {
+			promptTokens = 50
+		}
+		completionTokens := 350
+		_ = w.tokenLogRepo.LogUsage(ctx, "00000000-0000-0000-0000-000000000000", "", "SIGNAL_LLM_EXTRACTION", "gemini-1.5-flash", promptTokens, completionTokens)
 	}
 
 	// 2. Entity Resolution (Match or auto-provision company master)
@@ -100,7 +113,15 @@ func (w *ExtractionWorker) ProcessExtractionTask(ctx context.Context, task *asyn
 		return fmt.Errorf("vector embedding generation failed: %w", err)
 	}
 
-	// 5. Persist Extracted Signal, company_id & Vector to Database
+	// 5. Skip saving if extracted signal summary is empty or a negative noise response
+	cleanSummary := strings.TrimSpace(extractedSignal.Summary)
+	lowerSummary := strings.ToLower(cleanSummary)
+	if cleanSummary == "" || strings.HasPrefix(lowerSummary, "no corporate csr") || strings.HasPrefix(lowerSummary, "no csr") || strings.Contains(lowerSummary, "no corporate csr information") || strings.Contains(lowerSummary, "no csr funding information") {
+		log.Printf("[Asynq Worker] Skipping noise/negative signal for company [%s]: '%s'", extractedSignal.CompanyName, cleanSummary)
+		return nil
+	}
+
+	// Persist Extracted Signal, company_id & Vector to Database
 	signalID, err := w.signalRepo.SaveSignal(ctx, extractedSignal, companyID, payload.SourceType, payload.SourceURL, payload.ContentHash, embedding)
 	if err != nil {
 		return fmt.Errorf("database signal persistence failed: %w", err)

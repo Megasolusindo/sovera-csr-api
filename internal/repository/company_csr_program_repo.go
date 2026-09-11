@@ -17,6 +17,98 @@ func NewCompanyCSRProgramRepository(pool *pgxpool.Pool) *CompanyCSRProgramReposi
 	return &CompanyCSRProgramRepository{pool: pool}
 }
 
+type CSRProgramWithCompany struct {
+	ID            string   `json:"id"`
+	CompanyID     string   `json:"company_id"`
+	Name          string   `json:"name"`
+	Description   *string  `json:"description,omitempty"`
+	ProgramType   *string  `json:"program_type,omitempty"`
+	StartDate     *string  `json:"start_date,omitempty"`
+	EndDate       *string  `json:"end_date,omitempty"`
+	Status        string   `json:"status"`
+	BudgetAmount  *float64 `json:"budget_amount,omitempty"`
+	PartnerNGO    *string  `json:"partner_ngo,omitempty"`
+	ImpactSummary *string  `json:"impact_summary,omitempty"`
+	CreatedAt     string   `json:"created_at"`
+	UpdatedAt     string   `json:"updated_at"`
+	CompanyName   string   `json:"company_name"`
+	CompanyTicker *string  `json:"company_ticker,omitempty"`
+}
+
+// ListAllPrograms returns a paginated list of all CSR programs across companies.
+func (r *CompanyCSRProgramRepository) ListAllPrograms(ctx context.Context, limit, offset int, search, programType string) ([]CSRProgramWithCompany, int, error) {
+	if r.pool == nil {
+		return nil, 0, fmt.Errorf("database pool is nil")
+	}
+
+	whereClause := "WHERE 1=1"
+	args := []interface{}{}
+	argIdx := 1
+
+	if search != "" {
+		whereClause += fmt.Sprintf(" AND (p.name ILIKE $%d OR c.name ILIKE $%d OR p.partner_ngo ILIKE $%d OR p.program_type ILIKE $%d)", argIdx, argIdx, argIdx, argIdx)
+		args = append(args, "%"+search+"%")
+		argIdx++
+	}
+
+	if programType != "" {
+		whereClause += fmt.Sprintf(" AND p.program_type ILIKE $%d", argIdx)
+		args = append(args, "%"+programType+"%")
+		argIdx++
+	}
+
+	countQuery := fmt.Sprintf(`
+		SELECT COUNT(*)
+		FROM company_csr_programs p
+		JOIN companies c ON c.id = p.company_id
+		%s;
+	`, whereClause)
+
+	var total int
+	err := r.pool.QueryRow(ctx, countQuery, args...).Scan(&total)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to count company_csr_programs: %w", err)
+	}
+
+	query := fmt.Sprintf(`
+		SELECT 
+			p.id::text, p.company_id::text, p.name, p.description, p.program_type,
+			p.start_date::text, p.end_date::text, COALESCE(p.status, 'ACTIVE'), p.budget_amount::double precision, p.partner_ngo, p.impact_summary,
+			p.created_at::text, p.updated_at::text,
+			c.name as company_name, c.ticker as company_ticker
+		FROM company_csr_programs p
+		JOIN companies c ON c.id = p.company_id
+		%s
+		ORDER BY p.created_at DESC
+		LIMIT $%d OFFSET $%d;
+	`, whereClause, argIdx, argIdx+1)
+
+	args = append(args, limit, offset)
+
+	rows, err := r.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to query company_csr_programs: %w", err)
+	}
+	defer rows.Close()
+
+	var programs []CSRProgramWithCompany
+	for rows.Next() {
+		var item CSRProgramWithCompany
+		err := rows.Scan(
+			&item.ID, &item.CompanyID, &item.Name, &item.Description, &item.ProgramType,
+			&item.StartDate, &item.EndDate, &item.Status, &item.BudgetAmount, &item.PartnerNGO, &item.ImpactSummary,
+			&item.CreatedAt, &item.UpdatedAt,
+			&item.CompanyName, &item.CompanyTicker,
+		)
+		if err != nil {
+			return nil, 0, fmt.Errorf("failed to scan CSRProgramWithCompany row: %w", err)
+		}
+		programs = append(programs, item)
+	}
+
+	return programs, total, nil
+}
+
 // ListByCompanyID retrieves all CSR programs for a given company ID, including linked focus areas.
 func (r *CompanyCSRProgramRepository) ListByCompanyID(ctx context.Context, companyID string) ([]model.CompanyCSRProgram, error) {
 	if r.pool == nil {

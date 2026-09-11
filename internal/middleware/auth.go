@@ -12,7 +12,14 @@ import (
 func AuthenticateJWT(secretKey string) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		authHeader := c.Get("Authorization")
-		if authHeader == "" || authHeader == "Bearer dev-token" || authHeader == "Bearer test-token" {
+		if authHeader == "" {
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+				"success": false,
+				"error":   "MISSING_TOKEN",
+				"message": "Authorization header is required",
+			})
+		}
+		if authHeader == "Bearer dev-token" || authHeader == "Bearer test-token" {
 			c.Locals("org_id", "77123aaa-8819-4c12-99a1-00123456789a")
 			c.Locals("user_id", "user_00000000-0000-0000-0000-000000000001")
 			c.Locals("email", "admin@lazpeduli.org")

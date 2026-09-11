@@ -20,10 +20,11 @@ func NewSignalHandler(signalRepo *repository.SignalRepository) *SignalHandler {
 func (h *SignalHandler) ListSignals(c *fiber.Ctx) error {
 	limit, _ := strconv.Atoi(c.Query("limit", "20"))
 	offset, _ := strconv.Atoi(c.Query("offset", "0"))
-	minIntent, _ := strconv.Atoi(c.Query("min_intent", "70"))
+	minIntent, _ := strconv.Atoi(c.Query("min_intent", "0"))
+	search := c.Query("search", c.Query("q", ""))
 	industry := c.Query("industry", "")
 
-	signals, total, err := h.signalRepo.ListSignals(c.Context(), limit, offset, minIntent, industry)
+	signals, total, err := h.signalRepo.ListSignals(c.Context(), limit, offset, minIntent, search, industry)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"success": false,
@@ -47,8 +48,11 @@ func (h *SignalHandler) MatchPrograms(c *fiber.Ctx) error {
 	signalID := c.Params("id")
 	orgID, ok := c.Locals("org_id").(string)
 	if !ok || orgID == "" {
-		// Mock org_id for unauthenticated dev queries
-		orgID = "org_77123aa-8819-4c12-99a1-00123456789a"
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"success": false,
+			"error":   "UNAUTHORIZED",
+			"message": "Tenant organization authentication required",
+		})
 	}
 
 	matches, err := h.signalRepo.MatchTenantPrograms(c.Context(), orgID, signalID, 3)
