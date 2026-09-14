@@ -36,5 +36,5 @@ jobs:
           file: ./Dockerfile.api
           push: true
           tags: |
-            ghcr.io/mluludk/sovera-csr-api:latest
-            ghcr.io/mluludk/sovera-csr-api:${{ github.sha }}
+            ghcr.io/megasolusindo/sovera-csr-api:latest
+            ghcr.io/megasolusindo/sovera-csr-api:${{ github.sha }}
