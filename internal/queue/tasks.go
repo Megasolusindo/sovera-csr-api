@@ -15,6 +15,7 @@ const (
 	TypeESGExtraction      = "task:esg_extraction"
 	TypeProposalGeneration = "task:proposal_generation"
 	TypeIDXSync            = "task:idx_sync"
+	TypeOpenClawResearch   = "task:openclaw_research"
 
 	QueueDispatchCrawling   = "dispatch-crawling-queue"
 	QueuePollPendingTasks   = "poll-pending-tasks-queue"
@@ -23,6 +24,7 @@ const (
 	QueueESGExtraction      = "esg-extraction-queue"
 	QueueProposalGeneration = "proposal-generation-queue"
 	QueueIDXSync            = "idx-sync-queue"
+	QueueOpenClawResearch   = "openclaw-research-queue"
 )
 
 type LLMExtractionPayload struct {
@@ -71,3 +73,10 @@ func NewESGExtractionTask(payload ESGExtractionPayload) (*asynq.Task, error) {
 
 	return asynq.NewTask(TypeESGExtraction, bytes, asynq.Queue(QueueESGExtraction), asynq.MaxRetry(3)), nil
 }
+
+func NewOpenClawResearchTask(companyName string) (*asynq.Task, error) {
+	payload := map[string]string{"company_name": companyName}
+	bytes, _ := json.Marshal(payload)
+	return asynq.NewTask(TypeOpenClawResearch, bytes, asynq.Queue(QueueOpenClawResearch), asynq.MaxRetry(2)), nil
+}
+

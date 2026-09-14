@@ -113,9 +113,37 @@ func (w *ExtractionWorker) ProcessExtractionTask(ctx context.Context, task *asyn
 		return fmt.Errorf("vector embedding generation failed: %w", err)
 	}
 
-	// 5. Skip saving if extracted signal summary is empty or a negative noise response
+	// 5. Skip saving if extracted signal is NON_CSR, low confidence, invalid company, or a negative noise response
 	cleanSummary := strings.TrimSpace(extractedSignal.Summary)
 	lowerSummary := strings.ToLower(cleanSummary)
+	lowerText := strings.ToLower(textToExtract)
+
+	// Explicit NON_CSR taxonomy or low confidence skip
+	if strings.EqualFold(extractedSignal.CSRRelevance, "NON_CSR") || strings.EqualFold(extractedSignal.CSRRelevance, "LOW") {
+		log.Printf("[Asynq Worker] Skipping NON_CSR/LOW relevance signal for company [%s] (Relevance: %s): '%s'", extractedSignal.CompanyName, extractedSignal.CSRRelevance, cleanSummary)
+		return nil
+	}
+
+	if extractedSignal.CompanyName == "" || strings.EqualFold(extractedSignal.CompanyName, "Unknown") {
+		log.Printf("[Asynq Worker] Skipping signal with empty/unknown company name")
+		return nil
+	}
+
+	if extractedSignal.ConfidenceScore > 0 && extractedSignal.ConfidenceScore < 0.50 {
+		log.Printf("[Asynq Worker] Skipping low confidence signal (Score: %.2f) for company [%s]", extractedSignal.ConfidenceScore, extractedSignal.CompanyName)
+		return nil
+	}
+
+	// Internal employee welfare & B2B commercial agreement keyword heuristic fallback
+	isInternalHRBenefit := strings.Contains(lowerSummary, "kpr karyawan") ||
+		strings.Contains(lowerSummary, "kepemilikan rumah karyawan") ||
+		stringsContainsAny(lowerText, "program kepemilikan rumah karyawan", "kpr karyawan", "fasilitas payroll", "pinjaman karyawan", "internal employee benefit")
+
+	if isInternalHRBenefit {
+		log.Printf("[Asynq Worker] Skipping internal HR benefit / employee welfare signal for company [%s]: '%s'", extractedSignal.CompanyName, cleanSummary)
+		return nil
+	}
+
 	if cleanSummary == "" || strings.HasPrefix(lowerSummary, "no corporate csr") || strings.HasPrefix(lowerSummary, "no csr") || strings.Contains(lowerSummary, "no corporate csr information") || strings.Contains(lowerSummary, "no csr funding information") {
 		log.Printf("[Asynq Worker] Skipping noise/negative signal for company [%s]: '%s'", extractedSignal.CompanyName, cleanSummary)
 		return nil
@@ -153,4 +181,13 @@ func (w *ExtractionWorker) ProcessESGTask(ctx context.Context, task *asynq.Task)
 
 	log.Printf("[Asynq Worker] Successfully completed ESG Extraction Task for Company [%s], Profile ID [%s]", payload.CompanyName, esgProfile.ID)
 	return nil
+}
+
+func stringsContainsAny(s string, keywords ...string) bool {
+	for _, kw := range keywords {
+		if strings.Contains(s, kw) {
+			return true
+		}
+	}
+	return false
 }

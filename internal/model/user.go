@@ -9,6 +9,14 @@ const (
 	RoleOrgAdmin   UserOrgRole = "ORG_ADMIN"
 	RoleDirector   UserOrgRole = "DIRECTOR"
 	RoleFundraiser UserOrgRole = "FUNDRAISER"
+
+	// Corporate Roles
+	RoleCorpAdmin  UserOrgRole = "CORP_ADMIN"
+	RoleCSRManager UserOrgRole = "CSR_MANAGER"
+	RoleReviewer   UserOrgRole = "REVIEWER"
+
+	// Platform Superadmin Role
+	RoleSuperadmin UserOrgRole = "SUPERADMIN"
 )
 
 // User represents an authenticated user belonging to a tenant organization.

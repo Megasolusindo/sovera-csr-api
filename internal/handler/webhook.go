@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"strings"
@@ -11,19 +12,21 @@ import (
 	"github.com/hibiken/asynq"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"sovera-core-api/internal/pkg/telegram"
 	"sovera-core-api/internal/queue"
 	"sovera-core-api/internal/repository"
 	"sovera-core-api/internal/service/normalizer"
 )
 
 type WebhookHandler struct {
-	dbPool      *pgxpool.Pool
-	asynqClient *asynq.Client
-	crawlerRepo *repository.CrawlerRepository
-	normalizer  *normalizer.Normalizer
+	dbPool           *pgxpool.Pool
+	asynqClient      *asynq.Client
+	crawlerRepo      *repository.CrawlerRepository
+	normalizer       *normalizer.Normalizer
+	telegramNotifier *telegram.Notifier
 }
 
-func NewWebhookHandler(dbPool *pgxpool.Pool, asynqClient *asynq.Client, norm *normalizer.Normalizer) *WebhookHandler {
+func NewWebhookHandler(dbPool *pgxpool.Pool, asynqClient *asynq.Client, norm *normalizer.Normalizer, telegramNotifier *telegram.Notifier) *WebhookHandler {
 	var crawlerRepo *repository.CrawlerRepository
 	if dbPool != nil {
 		crawlerRepo = repository.NewCrawlerRepository(dbPool)
@@ -32,10 +35,11 @@ func NewWebhookHandler(dbPool *pgxpool.Pool, asynqClient *asynq.Client, norm *no
 		norm = normalizer.NewNormalizer()
 	}
 	return &WebhookHandler{
-		dbPool:      dbPool,
-		asynqClient: asynqClient,
-		crawlerRepo: crawlerRepo,
-		normalizer:  norm,
+		dbPool:           dbPool,
+		asynqClient:      asynqClient,
+		crawlerRepo:      crawlerRepo,
+		normalizer:       norm,
+		telegramNotifier: telegramNotifier,
 	}
 }
 
@@ -155,6 +159,22 @@ func (h *WebhookHandler) HandleCrawlerWebhook(c *fiber.Ctx) error {
 					log.Printf("Notice: Could not record failure for TargetID %s: %v", payload.TargetID, err)
 				}
 			}
+		}
+
+		// 3. Dispatch automated Telegram alert for critical errors (429 Rate Limit, 404 Dead Link, 500 Server Error)
+		if h.telegramNotifier != nil && h.telegramNotifier.IsEnabled() {
+			severity := "WARNING"
+			if httpStatusCode == 429 {
+				severity = "HIGH"
+			} else if httpStatusCode == 404 || httpStatusCode >= 500 {
+				severity = "CRITICAL"
+			}
+
+			alertTitle := fmt.Sprintf("Scraper Target Failure (HTTP %d)", httpStatusCode)
+			alertDetails := fmt.Sprintf("Task ID: <code>%s</code>\nSource Type: %s\nError Log: %s", payload.TaskID, payload.SourceType, errMsg)
+			go func() {
+				_ = h.telegramNotifier.SendAlert(context.Background(), alertTitle, severity, alertDetails, payload.SourceURL)
+			}()
 		}
 
 		return c.Status(fiber.StatusOK).JSON(fiber.Map{

@@ -14,7 +14,7 @@ import (
 func TestHandleCrawlerWebhook_SearchDiscovery(t *testing.T) {
 	app := fiber.New()
 	norm := normalizer.NewNormalizer()
-	handler := NewWebhookHandler(nil, nil, norm)
+	handler := NewWebhookHandler(nil, nil, norm, nil)
 
 	app.Post("/webhooks/crawler", handler.HandleCrawlerWebhook)
 
@@ -51,7 +51,7 @@ func TestHandleCrawlerWebhook_SearchDiscovery(t *testing.T) {
 func TestHandleCrawlerWebhook_CompanyEnrichment(t *testing.T) {
 	app := fiber.New()
 	norm := normalizer.NewNormalizer()
-	handler := NewWebhookHandler(nil, nil, norm)
+	handler := NewWebhookHandler(nil, nil, norm, nil)
 
 	app.Post("/webhooks/crawler", handler.HandleCrawlerWebhook)
 

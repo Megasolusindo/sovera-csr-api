@@ -9,20 +9,24 @@ import (
 
 	"sovera-core-api/internal/model"
 	"sovera-core-api/internal/pkg/phoneverifier"
+	"sovera-core-api/internal/pkg/telegram"
 	"sovera-core-api/internal/queue"
 	"sovera-core-api/internal/repository"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/google/uuid"
+	"github.com/hibiken/asynq"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type AdminHandler struct {
-	orgRepo      *repository.OrganizationRepository
-	userRepo     *repository.UserRepository
-	crawlerRepo  *repository.CrawlerRepository
-	tokenLogRepo *repository.TokenLogRepository
-	esgRepo      *repository.ESGProfileRepository
-	dbPool       *pgxpool.Pool
+	orgRepo          *repository.OrganizationRepository
+	userRepo         *repository.UserRepository
+	crawlerRepo      *repository.CrawlerRepository
+	tokenLogRepo     *repository.TokenLogRepository
+	esgRepo          *repository.ESGProfileRepository
+	telegramNotifier *telegram.Notifier
+	dbPool           *pgxpool.Pool
 }
 
 func NewAdminHandler(
@@ -31,15 +35,17 @@ func NewAdminHandler(
 	crawlerRepo *repository.CrawlerRepository,
 	tokenLogRepo *repository.TokenLogRepository,
 	esgRepo *repository.ESGProfileRepository,
+	telegramNotifier *telegram.Notifier,
 	dbPool *pgxpool.Pool,
 ) *AdminHandler {
 	return &AdminHandler{
-		orgRepo:      orgRepo,
-		userRepo:     userRepo,
-		crawlerRepo:  crawlerRepo,
-		tokenLogRepo: tokenLogRepo,
-		esgRepo:      esgRepo,
-		dbPool:       dbPool,
+		orgRepo:          orgRepo,
+		userRepo:         userRepo,
+		crawlerRepo:      crawlerRepo,
+		tokenLogRepo:     tokenLogRepo,
+		esgRepo:          esgRepo,
+		telegramNotifier: telegramNotifier,
+		dbPool:           dbPool,
 	}
 }
 
@@ -262,6 +268,10 @@ func (h *AdminHandler) GetAnalytics(c *fiber.Ctx) error {
 	var totalCSRPrograms int
 	var totalScrapingJobs int
 	var activeScrapingJobs int
+	var signalsToday int
+	var signalsYesterday int
+	var targetsCrawledToday int
+	var targetsCrawledYesterday int
 
 	_ = h.dbPool.QueryRow(c.UserContext(), "SELECT COUNT(*) FROM company.companies").Scan(&totalCompanies)
 	if totalCompanies == 0 {
@@ -272,6 +282,9 @@ func (h *AdminHandler) GetAnalytics(c *fiber.Ctx) error {
 	if totalSignals == 0 {
 		_ = h.dbPool.QueryRow(c.UserContext(), "SELECT COUNT(*) FROM public_corporate_signals").Scan(&totalSignals)
 	}
+
+	_ = h.dbPool.QueryRow(c.UserContext(), "SELECT COUNT(*) FROM public_corporate_signals WHERE created_at >= CURRENT_DATE").Scan(&signalsToday)
+	_ = h.dbPool.QueryRow(c.UserContext(), "SELECT COUNT(*) FROM public_corporate_signals WHERE created_at >= CURRENT_DATE - INTERVAL '1 day' AND created_at < CURRENT_DATE").Scan(&signalsYesterday)
 
 	_ = h.dbPool.QueryRow(c.UserContext(), "SELECT COUNT(*) FROM public.organizations").Scan(&totalOrgs)
 	if totalOrgs == 0 {
@@ -290,19 +303,25 @@ func (h *AdminHandler) GetAnalytics(c *fiber.Ctx) error {
 
 	_ = h.dbPool.QueryRow(c.UserContext(), "SELECT COUNT(*) FROM public.crawling_targets").Scan(&totalScrapingJobs)
 	_ = h.dbPool.QueryRow(c.UserContext(), "SELECT COUNT(*) FROM public.crawling_targets WHERE is_active = true").Scan(&activeScrapingJobs)
+	_ = h.dbPool.QueryRow(c.UserContext(), "SELECT COUNT(*) FROM public.crawling_targets WHERE last_scraped_at >= CURRENT_DATE").Scan(&targetsCrawledToday)
+	_ = h.dbPool.QueryRow(c.UserContext(), "SELECT COUNT(*) FROM public.crawling_targets WHERE last_scraped_at >= CURRENT_DATE - INTERVAL '1 day' AND last_scraped_at < CURRENT_DATE").Scan(&targetsCrawledYesterday)
 
 	return c.JSON(fiber.Map{
 		"metrics": fiber.Map{
-			"total_companies":      totalCompanies,
-			"total_signals":        totalSignals,
-			"total_tenants":        totalOrgs,
-			"total_organizations":  totalOrgs,
-			"total_users":          totalUsers,
-			"total_csr_programs":   totalCSRPrograms,
-			"total_scraping_jobs":  totalScrapingJobs,
-			"active_scraping_jobs": activeScrapingJobs,
-			"system_health":        "OPERATIONAL",
-			"sla_uptime":           "99.98%",
+			"total_companies":           totalCompanies,
+			"total_signals":             totalSignals,
+			"signals_today":             signalsToday,
+			"signals_yesterday":         signalsYesterday,
+			"targets_crawled_today":     targetsCrawledToday,
+			"targets_crawled_yesterday": targetsCrawledYesterday,
+			"total_tenants":             totalOrgs,
+			"total_organizations":       totalOrgs,
+			"total_users":               totalUsers,
+			"total_csr_programs":        totalCSRPrograms,
+			"total_scraping_jobs":       totalScrapingJobs,
+			"active_scraping_jobs":      activeScrapingJobs,
+			"system_health":             "OPERATIONAL",
+			"sla_uptime":                "99.98%",
 		},
 	})
 }
@@ -491,4 +510,345 @@ func (h *AdminHandler) TriggerIDXSync(c *fiber.Ctx) error {
 		"timestamp": time.Now().UTC().Format(time.RFC3339),
 	})
 }
+
+// GetCrawlerErrors handles GET /api/v1/admin/crawler-errors
+func (h *AdminHandler) GetCrawlerErrors(c *fiber.Ctx) error {
+	limit, _ := strconv.Atoi(c.Query("limit", "20"))
+	offset, _ := strconv.Atoi(c.Query("offset", "0"))
+	search := c.Query("search", "")
+	sourceType := c.Query("source_type", "")
+	healthStatus := c.Query("health_status", "")
+
+	items, total, err := h.crawlerRepo.ListSources(c.UserContext(), limit, offset, search, sourceType, healthStatus)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": err.Error(),
+		})
+	}
+
+	stats, _ := h.crawlerRepo.GetCrawlerErrorStats(c.UserContext())
+
+	return c.JSON(fiber.Map{
+		"data":  items,
+		"total": total,
+		"stats": stats,
+		"pagination": fiber.Map{
+			"limit":  limit,
+			"offset": offset,
+			"total":  total,
+		},
+	})
+}
+
+// ResetCrawlerErrors handles POST /api/v1/admin/crawler-errors/reset
+func (h *AdminHandler) ResetCrawlerErrors(c *fiber.Ctx) error {
+	var req struct {
+		TargetID string `json:"target_id"`
+	}
+	_ = c.BodyParser(&req)
+
+	affected, err := h.crawlerRepo.ResetCrawlerErrors(c.UserContext(), req.TargetID)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": err.Error(),
+		})
+	}
+
+	return c.JSON(fiber.Map{
+		"message":          "Crawler targets reset successfully",
+		"targets_affected": affected,
+	})
+}
+
+// TestTelegramNotification handles POST /api/v1/admin/notifications/telegram-test
+func (h *AdminHandler) TestTelegramNotification(c *fiber.Ctx) error {
+	if h.telegramNotifier == nil || !h.telegramNotifier.IsEnabled() {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"success": false,
+			"error":   "TELEGRAM_NOTIFIER_DISABLED",
+			"message": "Konfigurasi TELEGRAM_BOT_TOKEN atau TELEGRAM_CHAT_ID di environment belum diset.",
+		})
+	}
+
+	err := h.telegramNotifier.SendAlert(
+		c.UserContext(),
+		"Manual System Health Test",
+		"INFO",
+		"Uji coba integrasi Telegram Webhook Notifier dari SOVERA Admin Console.",
+		"https://sovera.megasolusindo.com/admin/system-alerts",
+	)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+	}
+	return c.JSON(fiber.Map{"success": true, "message": "Notification sent"})
+}
+
+// TriggerDeduplication handles POST /api/v1/admin/dedup
+func (h *AdminHandler) TriggerDeduplication(c *fiber.Ctx) error {
+	if h.dbPool == nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "dbPool is nil"})
+	}
+
+	sqlScript := `
+		DO $$
+		BEGIN
+			CREATE TEMP TABLE IF NOT EXISTS temp_bad_companies ON COMMIT DROP AS
+			WITH ranked AS (
+				SELECT 
+					id,
+					LOWER(TRIM(name)) AS norm_name,
+					FIRST_VALUE(id) OVER (
+						PARTITION BY LOWER(TRIM(name))
+						ORDER BY 
+							(CASE WHEN ticker IS NOT NULL AND ticker != '' THEN 2 ELSE 0 END + 
+							 CASE WHEN company_type IN ('SWASTA_TBK', 'BUMN') THEN 1 ELSE 0 END) DESC,
+							created_at ASC
+					) AS master_id
+				FROM company.companies
+			)
+			SELECT id, master_id FROM ranked WHERE id != master_id;
+
+			UPDATE intelligence.company_signals s SET company_id = b.master_id FROM temp_bad_companies b WHERE s.company_id = b.id;
+			UPDATE company_csr_programs p SET company_id = b.master_id FROM temp_bad_companies b WHERE p.company_id = b.id;
+			UPDATE crawling_targets t SET company_id = b.master_id FROM temp_bad_companies b WHERE t.company_id = b.id;
+			UPDATE company_esg_profiles e SET company_id = b.master_id FROM temp_bad_companies b WHERE e.company_id = b.id;
+
+			DELETE FROM company.companies WHERE id IN (SELECT id FROM temp_bad_companies);
+		END $$;
+	`
+
+	_, err := h.dbPool.Exec(c.UserContext(), sqlScript)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	return c.JSON(fiber.Map{
+		"success": true,
+		"message": "Master company deduplication completed successfully",
+	})
+}
+
+// ListAIFindings handles GET /api/v1/admin/ai/findings
+func (h *AdminHandler) ListAIFindings(c *fiber.Ctx) error {
+	status := c.Query("status", "")
+	limit, _ := strconv.Atoi(c.Query("limit", "20"))
+	offset, _ := strconv.Atoi(c.Query("offset", "0"))
+
+	aiRepo := repository.NewAIAgentRepository(h.dbPool)
+	findings, total, err := aiRepo.ListFindings(c.UserContext(), status, limit, offset)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": err.Error(),
+		})
+	}
+
+	return c.JSON(fiber.Map{
+		"data":  findings,
+		"total": total,
+		"pagination": fiber.Map{
+			"limit":  limit,
+			"offset": offset,
+			"total":  total,
+		},
+	})
+}
+
+// ReviewAIFinding handles POST /api/v1/admin/ai/findings/:id/review
+func (h *AdminHandler) ReviewAIFinding(c *fiber.Ctx) error {
+	findingIDStr := c.Params("id")
+	findingID, err := uuid.Parse(findingIDStr)
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "Invalid finding ID UUID",
+		})
+	}
+
+	var req model.ReviewFindingRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "Failed to parse request JSON body",
+		})
+	}
+
+	if req.Action != "approve" && req.Action != "reject" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "Action must be either 'approve' or 'reject'",
+		})
+	}
+
+	// Extract Admin User ID from context if available
+	adminID := uuid.Nil
+	if userVal := c.Locals("user_id"); userVal != nil {
+		if uid, ok := userVal.(uuid.UUID); ok {
+			adminID = uid
+		} else if uidStr, ok := userVal.(string); ok {
+			if parsed, pErr := uuid.Parse(uidStr); pErr == nil {
+				adminID = parsed
+			}
+		}
+	}
+
+	aiRepo := repository.NewAIAgentRepository(h.dbPool)
+	result, err := aiRepo.ReviewFinding(c.UserContext(), findingID, adminID, req.Action, req.ReviewNotes)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": err.Error(),
+		})
+	}
+
+	return c.JSON(fiber.Map{
+		"success": true,
+		"message": fmt.Sprintf("AI Finding %s successfully (%s)", findingIDStr, req.Action),
+		"data":    result,
+	})
+}
+
+// TriggerOpenClawResearch handles POST /api/v1/admin/ai/trigger-research
+func (h *AdminHandler) TriggerOpenClawResearch(c *fiber.Ctx) error {
+	var req struct {
+		CompanyName string `json:"company_name"`
+	}
+	_ = c.BodyParser(&req)
+
+	if req.CompanyName == "" {
+		req.CompanyName = "PT Pertamina Patra Niaga"
+	}
+
+	task, err := queue.NewOpenClawResearchTask(req.CompanyName)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	asynqClient := asynq.NewClient(asynq.RedisClientOpt{Addr: "redis:6379"})
+	defer asynqClient.Close()
+
+	info, err := asynqClient.Enqueue(task)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	return c.JSON(fiber.Map{
+		"success": true,
+		"message": fmt.Sprintf("OpenClaw AI Research Agent task enqueued for '%s'", req.CompanyName),
+		"task_id": info.ID,
+		"queue":   info.Queue,
+	})
+}
+
+// ListAIWatchlist handles GET /api/v1/admin/ai/watchlist
+func (h *AdminHandler) ListAIWatchlist(c *fiber.Ctx) error {
+	limit, _ := strconv.Atoi(c.Query("limit", "20"))
+	offset, _ := strconv.Atoi(c.Query("offset", "0"))
+
+	watchlistRepo := repository.NewAIWatchlistRepository(h.dbPool)
+	items, total, err := watchlistRepo.ListAllWatchlist(c.UserContext(), limit, offset)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": err.Error(),
+		})
+	}
+
+	return c.JSON(fiber.Map{
+		"data":  items,
+		"total": total,
+		"pagination": fiber.Map{
+			"limit":  limit,
+			"offset": offset,
+			"total":  total,
+		},
+	})
+}
+
+// RemoveAIWatchlist handles DELETE /api/v1/admin/ai/watchlist/:id
+func (h *AdminHandler) RemoveAIWatchlist(c *fiber.Ctx) error {
+	idStr := c.Params("id")
+	targetUUID, err := uuid.Parse(idStr)
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "Invalid company or watchlist UUID",
+		})
+	}
+
+	watchlistRepo := repository.NewAIWatchlistRepository(h.dbPool)
+	if err := watchlistRepo.RemoveFromWatchlist(c.UserContext(), targetUUID); err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": err.Error(),
+		})
+	}
+
+	return c.JSON(fiber.Map{
+		"success": true,
+		"message": fmt.Sprintf("Company '%s' removed from monitoring watchlist", idStr),
+	})
+}
+
+// TriggerOpenClawEnrichment handles POST /api/v1/admin/ai/trigger-enrichment
+func (h *AdminHandler) TriggerOpenClawEnrichment(c *fiber.Ctx) error {
+	var req struct {
+		CompanyID   string `json:"company_id"`
+		CompanyName string `json:"company_name"`
+	}
+	_ = c.BodyParser(&req)
+
+	if req.CompanyName == "" {
+		req.CompanyName = "PT Telkom Indonesia (Persero) Tbk"
+	}
+
+	task, err := queue.NewOpenClawResearchTask(fmt.Sprintf("ENRICH:%s", req.CompanyName))
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	asynqClient := asynq.NewClient(asynq.RedisClientOpt{Addr: "redis:6379"})
+	defer asynqClient.Close()
+
+	info, err := asynqClient.Enqueue(task)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	return c.JSON(fiber.Map{
+		"success": true,
+		"message": fmt.Sprintf("OpenClaw AI Enrichment Agent task enqueued for '%s'", req.CompanyName),
+		"task_id": info.ID,
+		"queue":   info.Queue,
+	})
+}
+
+// TriggerOpenClawMatching handles POST /api/v1/admin/ai/trigger-matching
+func (h *AdminHandler) TriggerOpenClawMatching(c *fiber.Ctx) error {
+	var req struct {
+		Category string `json:"category"`
+	}
+	_ = c.BodyParser(&req)
+
+	if req.Category == "" {
+		req.Category = "Pendidikan"
+	}
+
+	task, err := queue.NewOpenClawResearchTask(fmt.Sprintf("MATCH:%s", req.Category))
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	asynqClient := asynq.NewClient(asynq.RedisClientOpt{Addr: "redis:6379"})
+	defer asynqClient.Close()
+
+	info, err := asynqClient.Enqueue(task)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	return c.JSON(fiber.Map{
+		"success": true,
+		"message": fmt.Sprintf("OpenClaw AI Matching Agent task enqueued for category '%s'", req.Category),
+		"task_id": info.ID,
+		"queue":   info.Queue,
+	})
+}
+
+
+
+
+
 

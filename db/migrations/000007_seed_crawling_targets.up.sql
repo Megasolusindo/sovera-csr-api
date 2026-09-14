@@ -83,6 +83,7 @@ VALUES
     ('Antara News Feed - CSR Bank Danamon', 'NEWS_ARTICLE', 'https://www.antaranews.com/search?q=CSR+Bank+Danamon', 6, true, NULL),
     ('Google News RSS - CSR Bank OCBC NISP', 'NEWS_RSS', 'https://news.google.com/rss/search?q=CSR+Bank+OCBC+NISP&hl=id&gl=ID&ceid=ID:id', 6, true, NULL),
     ('Antara News Feed - CSR Bank OCBC NISP', 'NEWS_ARTICLE', 'https://www.antaranews.com/search?q=CSR+Bank+OCBC+NISP', 6, true, NULL),
+    ('Portal Resmi CSR Bank OCBC (ocbc.id)', 'NEWS_ARTICLE', 'https://www.ocbc.id/id/tentang-ocbc/csr', 6, true, NULL),
     ('Google News RSS - CSR Bank Permata', 'NEWS_RSS', 'https://news.google.com/rss/search?q=CSR+Bank+Permata&hl=id&gl=ID&ceid=ID:id', 6, true, NULL),
     ('Antara News Feed - CSR Bank Permata', 'NEWS_ARTICLE', 'https://www.antaranews.com/search?q=CSR+Bank+Permata', 6, true, NULL),
     ('Google News RSS - CSR Prudential Indonesia', 'NEWS_RSS', 'https://news.google.com/rss/search?q=CSR+Prudential+Indonesia&hl=id&gl=ID&ceid=ID:id', 6, true, NULL),

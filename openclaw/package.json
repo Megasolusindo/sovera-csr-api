@@ -1,0 +1,14 @@
+{
+  "name": "openclaw-agent",
+  "version": "1.0.0",
+  "description": "OpenClaw AI Agent Runner & Skill Services for CSR Intelligence",
+  "main": "agent.js",
+  "scripts": {
+    "start": "node agent.js",
+    "scheduler": "node scheduler.js"
+  },
+  "dependencies": {
+    "node-cron": "^3.0.3",
+    "playwright": "^1.63.0"
+  }
+}

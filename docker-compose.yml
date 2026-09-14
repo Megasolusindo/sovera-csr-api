@@ -41,6 +41,8 @@ services:
     restart: always
     ports:
       - "4000:4000"
+    env_file:
+      - .env
     environment:
       - PORT=4000
       - NODE_ENV=development
@@ -52,6 +54,17 @@ services:
       - SCRAPER_SERVICE_URL=${SCRAPER_SERVICE_URL:-https://api-scraper.megasolusindo.com/api/v1/scrape-tasks}
       - SCRAPER_API_KEY=${SCRAPER_API_KEY:-change-me}
       - WEBHOOK_URL=${WEBHOOK_URL:-http://host.docker.internal:4000/api/v1/webhooks/crawler?secret=super_secret_crawler_key_123}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
+      - ACTIVE_PAYMENT_GATEWAY=${ACTIVE_PAYMENT_GATEWAY:-faspay}
+      - MIDTRANS_SERVER_KEY=${MIDTRANS_SERVER_KEY}
+      - MIDTRANS_CLIENT_KEY=${MIDTRANS_CLIENT_KEY}
+      - MIDTRANS_MERCHANT_ID=${MIDTRANS_MERCHANT_ID}
+      - MIDTRANS_IS_PRODUCTION=${MIDTRANS_IS_PRODUCTION}
+      - FASPAY_MERCHANT_ID=${FASPAY_MERCHANT_ID}
+      - FASPAY_MERCHANT_KEY=${FASPAY_MERCHANT_KEY}
+      - FASPAY_IS_PRODUCTION=${FASPAY_IS_PRODUCTION}
+      - FASPAY_RETURN_URL=${FASPAY_RETURN_URL}
     depends_on:
       postgres:
         condition: service_healthy
@@ -74,11 +87,29 @@ services:
       - SCRAPER_SERVICE_URL=${SCRAPER_SERVICE_URL:-https://api-scraper.megasolusindo.com/api/v1/scrape-tasks}
       - SCRAPER_API_KEY=${SCRAPER_API_KEY:-change-me}
       - WEBHOOK_URL=${WEBHOOK_URL:-http://host.docker.internal:4000/api/v1/webhooks/crawler?secret=super_secret_crawler_key_123}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
+
+  openclaw:
+    build:
+      context: .
+      dockerfile: Dockerfile.openclaw
+    container_name: sovera_openclaw_agent
+    restart: always
+    environment:
+      - CSR_API_BASE_URL=http://api:4000/api/v1/ai
+      - OPENCLAW_AGENT_TOKEN=${OPENCLAW_AGENT_TOKEN:-openclaw_agent_live_key_998877665544}
+      - SERPER_API_KEY=${SERPER_API_KEY}
+      - AI_API_KEY=${AI_API_KEY}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-8850608348:AAHXkUz7nldwf2WR9dmMm5NI9Yox-WWC2Gw}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID:-87116487}
+    depends_on:
+      - api
 
 volumes:
   postgres_data:

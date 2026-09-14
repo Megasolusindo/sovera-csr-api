@@ -164,15 +164,14 @@ func (w *IDXCompanyWorker) autoRegisterCrawlingTargets(ctx context.Context, comp
 		IsActive:           true,
 	})
 
-	// 2. Company official newsroom website if website URL exists
+	// 2. Company official website if verified website URL exists
 	if website != "" {
-		newsURL := strings.TrimSuffix(website, "/") + "/csr"
-		newsName := fmt.Sprintf("Company Newsroom - %s (%s)", name, ticker)
+		newsName := fmt.Sprintf("Company Website - %s (%s)", name, ticker)
 		_, _ = w.crawlerRepo.CreateTarget(ctx, model.CrawlingTarget{
 			CompanyID:          &companyID,
 			SourceName:         newsName,
 			SourceType:         "COMPANY_WEBSITE",
-			TargetURL:          newsURL,
+			TargetURL:          website,
 			CheckIntervalHours: 12,
 			IsActive:           true,
 		})

@@ -340,6 +340,10 @@ func (r *CrawlerRepository) CreateTarget(ctx context.Context, target model.Crawl
 			source_name, source_type, target_url, check_interval_hours, is_active, health_status, company_id, next_run_at, created_at, updated_at
 		)
 		VALUES ($1, $2, $3, $4, $5, 'HEALTHY', NULLIF($6, '')::uuid, NOW(), NOW(), NOW())
+		ON CONFLICT (target_url) DO UPDATE SET
+			company_id = COALESCE(EXCLUDED.company_id, crawling_targets.company_id),
+			is_active = true,
+			updated_at = NOW()
 		RETURNING id, company_id::text, source_name, source_type, target_url, check_interval_hours, 
 		          last_scraped_at, next_run_at, is_active, consecutive_failures,
 		          last_http_status, last_error_message, health_status, created_at, updated_at;
@@ -365,6 +369,109 @@ func (r *CrawlerRepository) CreateTarget(ctx context.Context, target model.Crawl
 
 	t.CompanyID = companyIDStr
 	return &t, nil
+}
+
+// GetTargetByURL fetches a crawling target by its exact target_url
+func (r *CrawlerRepository) GetTargetByURL(ctx context.Context, targetURL string) (*model.CrawlingTarget, error) {
+	if r.pool == nil {
+		return nil, fmt.Errorf("database pool is nil")
+	}
+
+	query := `
+		SELECT id, company_id::text, source_name, source_type, target_url, check_interval_hours, 
+		       last_scraped_at, next_run_at, is_active, consecutive_failures,
+		       last_http_status, last_error_message, health_status, created_at, updated_at
+		FROM crawling_targets
+		WHERE target_url = $1
+		LIMIT 1;
+	`
+
+	var t model.CrawlingTarget
+	var companyIDStr *string
+	err := r.pool.QueryRow(ctx, query, targetURL).Scan(
+		&t.ID, &companyIDStr, &t.SourceName, &t.SourceType, &t.TargetURL, &t.CheckIntervalHours,
+		&t.LastScrapedAt, &t.NextRunAt, &t.IsActive, &t.ConsecutiveFailures,
+		&t.LastHTTPStatus, &t.LastErrorMsg, &t.HealthStatus, &t.CreatedAt, &t.UpdatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	t.CompanyID = companyIDStr
+	return &t, nil
+}
+type CrawlerErrorStats struct {
+	TotalFailing        int `json:"total_failing"`
+	HTTP429RateLimited  int `json:"http_429_rate_limited"`
+	HTTP404DeadLinks    int `json:"http_404_dead_links"`
+	HTTP500ServerErrors int `json:"http_500_server_errors"`
+}
+
+// GetCrawlerErrorStats fetches aggregate metrics on failing crawling targets.
+func (r *CrawlerRepository) GetCrawlerErrorStats(ctx context.Context) (*CrawlerErrorStats, error) {
+	if r.pool == nil {
+		return &CrawlerErrorStats{}, nil
+	}
+	var stats CrawlerErrorStats
+	query := `
+		SELECT 
+			COUNT(*) FILTER (WHERE last_http_status >= 400 OR health_status != 'HEALTHY'),
+			COUNT(*) FILTER (WHERE last_http_status = 429),
+			COUNT(*) FILTER (WHERE last_http_status IN (404, 410) OR health_status = 'DISABLED_DEAD_LINK'),
+			COUNT(*) FILTER (WHERE last_http_status >= 500)
+		FROM crawling_targets;
+	`
+	err := r.pool.QueryRow(ctx, query).Scan(
+		&stats.TotalFailing,
+		&stats.HTTP429RateLimited,
+		&stats.HTTP404DeadLinks,
+		&stats.HTTP500ServerErrors,
+	)
+	if err != nil {
+		return &CrawlerErrorStats{}, nil
+	}
+	return &stats, nil
+}
+
+// ResetCrawlerErrors resets health status and failures for a target or all failing targets.
+func (r *CrawlerRepository) ResetCrawlerErrors(ctx context.Context, targetID string) (int, error) {
+	if r.pool == nil {
+		return 0, fmt.Errorf("database pool is nil")
+	}
+
+	var query string
+	var args []interface{}
+
+	if targetID != "" && targetID != "ALL" {
+		query = `
+			UPDATE crawling_targets
+			SET consecutive_failures = 0,
+			    health_status = 'HEALTHY',
+			    is_active = TRUE,
+			    next_run_at = NOW(),
+			    last_error_message = NULL,
+			    updated_at = NOW()
+			WHERE id = $1;
+		`
+		args = append(args, targetID)
+	} else {
+		query = `
+			UPDATE crawling_targets
+			SET consecutive_failures = 0,
+			    health_status = 'HEALTHY',
+			    is_active = TRUE,
+			    next_run_at = NOW(),
+			    last_error_message = NULL,
+			    updated_at = NOW()
+			WHERE last_http_status >= 400 OR health_status != 'HEALTHY';
+		`
+	}
+
+	tag, err := r.pool.Exec(ctx, query, args...)
+	if err != nil {
+		return 0, fmt.Errorf("failed to reset crawler errors: %w", err)
+	}
+	return int(tag.RowsAffected()), nil
 }
 
 

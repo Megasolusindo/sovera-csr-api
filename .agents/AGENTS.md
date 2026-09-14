@@ -8,3 +8,9 @@
   3. **Phone & Email Contacts**: Verified via strict format validation (`phoneverifier` and email regex). Rejects placeholder numbers (e.g., `000000`, `123456`).
   4. **CSR Signals & Budgets**: Extracted strictly from real scraped text and verified news articles via LLM without synthetic or hardcoded fallback names/budgets.
 - **NO SILENT DUMMY FALLBACKS**: If an API or extraction service fails (e.g. Gemini LLM rate limits or network error), the pipeline must return an explicit error or log a failure. It MUST NOT fall back to dummy/mock data generation under any circumstance.
+
+## STRICT NO SYNTHETIC URL RECONSTRUCTION DIRECTIVE
+- **ZERO SYNTHETIC URL GUESSING**: Under no circumstances should any synthetic, reconstructed, or slugified URLs be generated or inserted into `crawling_targets` or `companies` tables (e.g. `https://www.youtube.com/@{company-slug}`, `https://www.linkedin.com/company/{company-slug}`, `https://www.instagram.com/{company-slug}`, `https://www.facebook.com/{company-slug}`).
+- **EMPIRICAL & VERIFIED URL SOURCES ONLY**: All target URLs must be obtained directly from live, authoritative sources (e.g., official website URLs verified via HTTP 2xx/3xx, or Google News / Serper API RSS search queries).
+- **CRITICAL REJECTION**: Any handle guessing or sub-path concatenation (such as appending `/csr` to arbitrary domain names) is strictly forbidden.
+

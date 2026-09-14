@@ -75,7 +75,59 @@ func (r *UserRepository) Create(ctx context.Context, u model.User) (*model.User,
 
 type UserWithOrgItem struct {
 	model.User
-	OrgName string `json:"org_name" db:"org_name"`
+	OrgName    string           `json:"org_name" db:"org_name"`
+	TenantType model.TenantType `json:"tenant_type" db:"tenant_type"`
+	CompanyID  *string          `json:"company_id,omitempty" db:"company_id"`
+}
+
+// FindUserWithTenantByEmail retrieves user along with tenant organization details.
+func (r *UserRepository) FindUserWithTenantByEmail(ctx context.Context, email string) (*UserWithOrgItem, error) {
+	query := `
+		SELECT 
+			u.id, u.org_id, u.email, u.password_hash, u.full_name, u.role, u.is_active, u.created_at, u.updated_at,
+			COALESCE(o.name, 'System') AS org_name,
+			COALESCE(o.type, 'ORGANIZATION') AS tenant_type,
+			o.company_id
+		FROM users u
+		LEFT JOIN organizations o ON o.id = u.org_id
+		WHERE u.email = $1 AND u.is_active = true
+		LIMIT 1;
+	`
+	var item UserWithOrgItem
+	err := r.pool.QueryRow(ctx, query, email).Scan(
+		&item.ID, &item.OrgID, &item.Email, &item.PasswordHash, &item.FullName, &item.Role,
+		&item.IsActive, &item.CreatedAt, &item.UpdatedAt,
+		&item.OrgName, &item.TenantType, &item.CompanyID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("user with tenant not found: %w", err)
+	}
+	return &item, nil
+}
+
+// FindUserWithTenantByID retrieves user along with tenant organization details by User ID.
+func (r *UserRepository) FindUserWithTenantByID(ctx context.Context, id string) (*UserWithOrgItem, error) {
+	query := `
+		SELECT 
+			u.id, u.org_id, u.email, u.password_hash, u.full_name, u.role, u.is_active, u.created_at, u.updated_at,
+			COALESCE(o.name, 'System') AS org_name,
+			COALESCE(o.type, 'ORGANIZATION') AS tenant_type,
+			o.company_id
+		FROM users u
+		LEFT JOIN organizations o ON o.id = u.org_id
+		WHERE u.id = $1 AND u.is_active = true
+		LIMIT 1;
+	`
+	var item UserWithOrgItem
+	err := r.pool.QueryRow(ctx, query, id).Scan(
+		&item.ID, &item.OrgID, &item.Email, &item.PasswordHash, &item.FullName, &item.Role,
+		&item.IsActive, &item.CreatedAt, &item.UpdatedAt,
+		&item.OrgName, &item.TenantType, &item.CompanyID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("user with tenant not found: %w", err)
+	}
+	return &item, nil
 }
 
 // ListAllUsers retrieves user accounts across all tenant organizations.

@@ -101,7 +101,7 @@ func (r *SignalRepository) ListSignals(ctx context.Context, limit, offset, minIn
 		return []CorporateSignal{}, 0, nil
 	}
 
-	whereClause := "WHERE intent_score >= $1 AND summary IS NOT NULL AND summary != '' AND summary NOT ILIKE 'No %CSR%' AND summary NOT ILIKE 'No corporate %'"
+	whereClause := "WHERE intent_score >= $1 AND summary IS NOT NULL AND summary != '' AND summary NOT ILIKE 'No %CSR%' AND summary NOT ILIKE 'No corporate %' AND (csr_relevance IS NULL OR csr_relevance NOT IN ('NON_CSR', 'LOW')) AND company_name IS NOT NULL AND company_name != '' AND company_name != 'Unknown'"
 	args := []interface{}{minIntent}
 	argIdx := 2
 

@@ -57,6 +57,10 @@ EVERY extracted field MUST be grounded by an exact quote ("source_quote") direct
 STRICT FILTER: ONLY extract corporate signals for Perseroan Terbatas (PT, PT Tbk, BUMN, Multinationals, International Corporates).
 DO NOT extract signals for CV (Commanditaire Vennootschap) or small local partnerships. If the entity in the text is a CV, return "company_name": "".
 
+CRITICAL NON-CSR CLASSIFICATION RULE:
+- Internal employee welfare programs (e.g. employee housing programs / KPR karyawan, internal employee loans/welfare, payroll banking services) and standard commercial B2B banking agreements are NOT CSR.
+- If the input text describes an internal employee benefit or a standard commercial B2B deal, set "csr_relevance": "NON_CSR", "intent_score": 0, "opportunity_alert": false, and "summary": "No corporate CSR information (internal HR benefit / commercial B2B partnership)".
+
 JSON Keys Required:
 - "company_name" (string): Official registered corporate name (MUST be PT/BUMN/Corporation, NOT CV).
 - "industry_sector" (string): Industry classification.
@@ -64,20 +68,20 @@ JSON Keys Required:
 - "target_regions" (array of strings): Geographical regions mentioned.
 - "estimated_budget_signal" (number): Alokasi dana CSR/TJSL in IDR (Rupiah) if mentioned, else 0.
 - "trigger_event" (string): Corporate event e.g. Annual Report, Press Release, Q2 Financials, CSR Launch.
-- "intent_score" (number 1-100): Score of active partnership/grant intent.
+- "intent_score" (number 1-100): Score of active partnership/grant intent. Set to 0 if NON_CSR.
 - "summary" (string): Concise summary of the CSR opportunity.
 - "partner_ngo" (string): NGO/Foundation partner mentioned, if any.
 - "csr_email_contact" (string): Contact email address or phone if present.
 - "source_quote" (string): EXACT verbatim quote from the text backing this extraction.
-- "csr_relevance" (string): Level 1 Taxonomy -> "HIGH", "MEDIUM", "LOW", "NON_CSR".
+- "csr_relevance" (string): Level 1 Taxonomy -> "HIGH", "MEDIUM", "LOW", "NON_CSR". Must be "NON_CSR" for internal HR/employee welfare/commercial B2B deals.
 - "activity_focus" (string): Level 2 Taxonomy -> "Education", "Health", "Environment", "UMKM & Economic Empowerment", "Humanitarian & Disaster Relief", "Community Development", "Infrastructure & Digital Inclusion", "Volunteerism", "Creating Shared Value (CSV)".
 - "action_type" (string): Level 3 Taxonomy -> "Donation", "Partnership", "Scholarship", "Training", "Volunteer", "Infrastructure Development", "Empowerment", "Grant", "Funding", "Community Program".
-- "opportunity_alert" (boolean): Set to true IF the text explicitly contains open partnership offers, calls for proposals, grant opportunities, or funding invitations (e.g., "membuka kemitraan", "call for proposal", "open partnership", "grant opportunity").
+- "opportunity_alert" (boolean): Set to true IF the text explicitly contains open partnership offers, calls for proposals, grant opportunities, or funding invitations (e.g., "membuka kemitraan", "call for proposal", "open partnership", "grant opportunity"). MUST be false if NON_CSR.
 
 Input Text:
 %s`, rawText)
 
-	url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=%s", s.apiKey)
+	url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-lite-latest:generateContent?key=%s", s.apiKey)
 	reqBody := map[string]interface{}{
 		"contents": []map[string]interface{}{
 			{
@@ -252,7 +256,7 @@ JSON Keys Required:
 Input Text:
 %s`, rawText)
 
-	url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=%s", s.apiKey)
+	url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-lite-latest:generateContent?key=%s", s.apiKey)
 	reqBody := map[string]interface{}{
 		"contents": []map[string]interface{}{
 			{

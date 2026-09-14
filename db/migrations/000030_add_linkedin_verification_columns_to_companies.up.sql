@@ -1,0 +1,34 @@
+-- Migration 000030 Up: Add LinkedIn URL verification columns to company.companies table and companies view
+
+ALTER TABLE company.companies
+ADD COLUMN IF NOT EXISTS linkedin_status VARCHAR(50) DEFAULT 'UNVERIFIED',
+ADD COLUMN IF NOT EXISTS linkedin_verified_at TIMESTAMPTZ,
+ADD COLUMN IF NOT EXISTS linkedin_last_error TEXT;
+
+CREATE INDEX IF NOT EXISTS idx_companies_linkedin_status ON company.companies(linkedin_status);
+
+CREATE OR REPLACE VIEW companies AS
+ SELECT c.id,
+    c.name,
+    c.legal_name,
+    c.slug,
+    c.industry_id,
+    c.industry_sector,
+    c.company_type,
+    c.priority_tier,
+    c.csr_category,
+    c.website,
+    c.linkedin_url,
+    c.headquarters,
+    c.employee_range,
+    c.revenue_range,
+    c.is_public,
+    c.ticker,
+    c.parent_company_id,
+    c.alias_keywords,
+    c.created_at,
+    c.updated_at,
+    c.linkedin_status,
+    c.linkedin_verified_at,
+    c.linkedin_last_error
+   FROM company.companies c;

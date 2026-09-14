@@ -49,7 +49,12 @@ func main() {
 	extractionWorker := queue.NewExtractionWorker(geminiService, signalRepo, textNormalizer, entityResolver, esgExtractor, tokenLogRepo)
 	dispatcherWorker := queue.NewCrawlerDispatcherHandler(crawlerRepo, dispatcher)
 	enrichmentWorker := queue.NewCompanyEnrichmentWorker(companyEnricher)
+	openclawWorker := queue.NewOpenClawWorker()
 	healthCheckWorker := queue.NewURLHealthCheckWorker(dbPool)
+	companyLinkedInWorker := queue.NewCompanyLinkedInWorker(dbPool)
+	companyInstagramWorker := queue.NewCompanyInstagramWorker(dbPool)
+	companyLinkedInDiscoveryWorker := queue.NewCompanyLinkedInDiscoveryWorker(dbPool, cfg.SerperAPIKey)
+	companyInstagramDiscoveryWorker := queue.NewCompanyInstagramDiscoveryWorker(dbPool, cfg.SerperAPIKey)
 
 	// 3. Asynq Scheduler for Periodic Tasks
 	scheduler := asynq.NewScheduler(
@@ -107,6 +112,88 @@ func main() {
 		}
 	}
 
+	// Schedule task:company_linkedin_batch_check every 12 hours (cron: "0 */12 * * *")
+	linkedInBatchTask, err := queue.NewCompanyLinkedInBatchCheckTask()
+	if err == nil {
+		startupClient := asynq.NewClient(asynq.RedisClientOpt{Addr: cfg.RedisURL})
+		if info, enqueueErr := startupClient.Enqueue(linkedInBatchTask); enqueueErr != nil {
+			log.Printf("Notice: Could not enqueue instant startup LinkedIn batch task: %v", enqueueErr)
+		} else {
+			log.Printf("Enqueued instant startup LinkedIn batch check to Redis queue (TaskID: %s)", info.ID)
+		}
+		startupClient.Close()
+
+		if entryID, err := scheduler.Register("0 */12 * * *", linkedInBatchTask); err != nil {
+			log.Printf("Warning: Could not register company LinkedIn batch check cron: %v", err)
+		} else {
+			log.Printf("Registered company LinkedIn batch check cron with entry ID: %s", entryID)
+		}
+	}
+
+	// Schedule task:company_linkedin_discovery_batch every 12 hours (cron: "0 */12 * * *")
+	linkedInDiscoveryTask, err := queue.NewCompanyLinkedInDiscoveryBatchTask()
+	if err == nil {
+		startupClient := asynq.NewClient(asynq.RedisClientOpt{Addr: cfg.RedisURL})
+		if info, enqueueErr := startupClient.Enqueue(linkedInDiscoveryTask); enqueueErr != nil {
+			log.Printf("Notice: Could not enqueue instant startup LinkedIn discovery task: %v", enqueueErr)
+		} else {
+			log.Printf("Enqueued instant startup LinkedIn discovery sweep to Redis queue (TaskID: %s)", info.ID)
+		}
+		startupClient.Close()
+
+		if entryID, err := scheduler.Register("0 */12 * * *", linkedInDiscoveryTask); err != nil {
+			log.Printf("Warning: Could not register company LinkedIn discovery cron: %v", err)
+		} else {
+			log.Printf("Registered company LinkedIn discovery cron with entry ID: %s", entryID)
+		}
+	}
+
+	// Schedule task:company_instagram_batch_check every 12 hours (cron: "0 */12 * * *")
+	instagramBatchTask, err := queue.NewCompanyInstagramBatchCheckTask()
+	if err == nil {
+		startupClient := asynq.NewClient(asynq.RedisClientOpt{Addr: cfg.RedisURL})
+		if info, enqueueErr := startupClient.Enqueue(instagramBatchTask); enqueueErr != nil {
+			log.Printf("Notice: Could not enqueue instant startup Instagram batch task: %v", enqueueErr)
+		} else {
+			log.Printf("Enqueued instant startup Instagram batch check to Redis queue (TaskID: %s)", info.ID)
+		}
+		startupClient.Close()
+
+		if entryID, err := scheduler.Register("0 */12 * * *", instagramBatchTask); err != nil {
+			log.Printf("Warning: Could not register company Instagram batch check cron: %v", err)
+		} else {
+			log.Printf("Registered company Instagram batch check cron with entry ID: %s", entryID)
+		}
+	}
+
+	// Schedule task:company_instagram_discovery_batch every 12 hours (cron: "0 */12 * * *")
+	instagramDiscoveryTask, err := queue.NewCompanyInstagramDiscoveryBatchTask()
+	if err == nil {
+		startupClient := asynq.NewClient(asynq.RedisClientOpt{Addr: cfg.RedisURL})
+		if info, enqueueErr := startupClient.Enqueue(instagramDiscoveryTask); enqueueErr != nil {
+			log.Printf("Notice: Could not enqueue instant startup Instagram discovery task: %v", enqueueErr)
+		} else {
+			log.Printf("Enqueued instant startup Instagram discovery sweep to Redis queue (TaskID: %s)", info.ID)
+		}
+		startupClient.Close()
+
+		if entryID, err := scheduler.Register("0 */12 * * *", instagramDiscoveryTask); err != nil {
+			log.Printf("Warning: Could not register company Instagram discovery cron: %v", err)
+		} else {
+			log.Printf("Registered company Instagram discovery cron with entry ID: %s", entryID)
+		}
+	}
+
+	go func() {
+		fbWorker := queue.NewCompanyFacebookWorker(dbPool)
+		_ = fbWorker.HandleCompanyFacebookBatchCheck(context.Background(), nil)
+	}()
+
+	go func() {
+		ytWorker := queue.NewCompanyYoutubeWorker(dbPool)
+		_ = ytWorker.HandleCompanyYoutubeBatchCheck(context.Background(), nil)
+	}()
+
 	go func() {
 		if err := scheduler.Run(); err != nil {
 			log.Printf("Scheduler error: %v", err)
@@ -119,14 +206,19 @@ func main() {
 		asynq.Config{
 			Concurrency: 10,
 			Queues: map[string]int{
-				queue.QueueDispatchCrawling:      10,
-				queue.QueuePollPendingTasks:      5,
-				queue.QueueEnrichMissingWebsites: 5,
-				queue.QueueURLHealthCheck:        2,
-				queue.QueueRawIngestion:          10,
-				queue.QueueLLMExtraction:         5,
-				queue.QueueESGExtraction:         5,
-				queue.QueueProposalGeneration:    3,
+				queue.QueueDispatchCrawling:             10,
+				queue.QueuePollPendingTasks:             5,
+				queue.QueueEnrichMissingWebsites:        5,
+				queue.QueueURLHealthCheck:               2,
+				queue.QueueCompanyLinkedInBatchCheck:    2,
+				queue.QueueCompanyLinkedInDiscoveryBatch:  2,
+				queue.QueueCompanyInstagramBatchCheck:   2,
+				queue.QueueCompanyInstagramDiscoveryBatch: 2,
+				queue.QueueRawIngestion:                 10,
+				queue.QueueLLMExtraction:                5,
+				queue.QueueESGExtraction:                5,
+				queue.QueueProposalGeneration:           3,
+				queue.QueueOpenClawResearch:          2,
 			},
 		},
 	)
@@ -139,7 +231,13 @@ func main() {
 	mux.HandleFunc(queue.TypeEnrichMissingWebsites, enrichmentWorker.HandleEnrichMissingWebsites)
 	mux.HandleFunc(queue.TypeLLMExtraction, extractionWorker.ProcessExtractionTask)
 	mux.HandleFunc(queue.TypeESGExtraction, extractionWorker.ProcessESGTask)
+	mux.HandleFunc(queue.TypeOpenClawResearch, openclawWorker.HandleOpenClawResearchTask)
 	mux.HandleFunc(queue.TypeURLHealthCheck, healthCheckWorker.HandleURLHealthCheck)
+	mux.HandleFunc(queue.TypeCompanyLinkedInBatchCheck, companyLinkedInWorker.HandleCompanyLinkedInBatchCheck)
+	mux.HandleFunc(queue.TypeCompanyLinkedInDiscoveryBatch, companyLinkedInDiscoveryWorker.HandleCompanyLinkedInDiscoveryBatch)
+	mux.HandleFunc(queue.TypeCompanyInstagramBatchCheck, companyInstagramWorker.HandleCompanyInstagramBatchCheck)
+	mux.HandleFunc(queue.TypeCompanyInstagramDiscoveryBatch, companyInstagramDiscoveryWorker.HandleCompanyInstagramDiscoveryBatch)
+
 
 	log.Println("Asynq Worker server listening for queue jobs...")
 	if err := srv.Run(mux); err != nil {

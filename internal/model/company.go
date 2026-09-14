@@ -13,6 +13,13 @@ type Company struct {
 	Website         *string   `json:"website,omitempty"`
 	Phone           *string   `json:"phone,omitempty"`
 	LinkedinURL     *string   `json:"linkedin_url,omitempty"`
+	LinkedinStatus  *string   `json:"linkedin_status,omitempty"`
+	InstagramURL    *string   `json:"instagram_url,omitempty"`
+	InstagramStatus *string   `json:"instagram_status,omitempty"`
+	FacebookURL     *string   `json:"facebook_url,omitempty"`
+	FacebookStatus  *string   `json:"facebook_status,omitempty"`
+	YoutubeURL      *string   `json:"youtube_url,omitempty"`
+	YoutubeStatus   *string   `json:"youtube_status,omitempty"`
 	Headquarters    *string   `json:"headquarters,omitempty"`
 	EmployeeRange   *string   `json:"employee_range,omitempty"`
 	RevenueRange    *string   `json:"revenue_range,omitempty"`
@@ -23,6 +30,9 @@ type Company struct {
 	CSRCategory     string    `json:"csr_category"`
 	PartnerNGO      *string   `json:"partner_ngo,omitempty"`
 	AliasKeywords   []string  `json:"alias_keywords"`
+	IsClaimed       bool      `json:"is_claimed"`
+	CorporateDomain *string   `json:"corporate_domain,omitempty"`
+	ClaimedByTenantID *string `json:"claimed_by_tenant_id,omitempty"`
 	CreatedAt       time.Time `json:"created_at"`
 	UpdatedAt       time.Time `json:"updated_at"`
 }

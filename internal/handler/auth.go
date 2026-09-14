@@ -106,7 +106,7 @@ func (h *AuthHandler) Login(c *fiber.Ctx) error {
 		})
 	}
 
-	user, err := h.userRepo.FindByEmail(c.Context(), payload.Email)
+	user, err := h.userRepo.FindUserWithTenantByEmail(c.Context(), payload.Email)
 	if err != nil {
 		// Generic error to prevent email enumeration
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
@@ -122,15 +122,21 @@ func (h *AuthHandler) Login(c *fiber.Ctx) error {
 		})
 	}
 
-	// Generate JWT with RBAC claims
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-		"sub":    user.ID,
-		"org_id": user.OrgID,
-		"email":  user.Email,
-		"role":   string(user.Role),
-		"exp":    time.Now().Add(24 * time.Hour).Unix(),
-		"iat":    time.Now().Unix(),
-	})
+	// Generate JWT with RBAC & Tenant claims
+	claims := jwt.MapClaims{
+		"sub":         user.ID,
+		"org_id":      user.OrgID,
+		"email":       user.Email,
+		"role":        string(user.Role),
+		"tenant_type": string(user.TenantType),
+		"exp":         time.Now().Add(24 * time.Hour).Unix(),
+		"iat":         time.Now().Unix(),
+	}
+	if user.CompanyID != nil {
+		claims["company_id"] = *user.CompanyID
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 
 	tokenString, err := token.SignedString([]byte(h.jwtSecret))
 	if err != nil {
@@ -143,11 +149,14 @@ func (h *AuthHandler) Login(c *fiber.Ctx) error {
 		"success": true,
 		"token":   tokenString,
 		"user": fiber.Map{
-			"id":        user.ID,
-			"org_id":    user.OrgID,
-			"email":     user.Email,
-			"full_name": user.FullName,
-			"role":      user.Role,
+			"id":          user.ID,
+			"org_id":      user.OrgID,
+			"org_name":    user.OrgName,
+			"email":       user.Email,
+			"full_name":   user.FullName,
+			"role":        user.Role,
+			"tenant_type": user.TenantType,
+			"company_id":  user.CompanyID,
 		},
 	})
 }
@@ -157,7 +166,7 @@ func (h *AuthHandler) Login(c *fiber.Ctx) error {
 // Returns the authenticated user's profile (requires JWT).
 func (h *AuthHandler) Me(c *fiber.Ctx) error {
 	userID, _ := c.Locals("user_id").(string)
-	user, err := h.userRepo.FindByID(c.Context(), userID)
+	user, err := h.userRepo.FindUserWithTenantByID(c.Context(), userID)
 	if err != nil {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
 			"success": false, "error": "USER_NOT_FOUND", "message": err.Error(),
@@ -167,13 +176,16 @@ func (h *AuthHandler) Me(c *fiber.Ctx) error {
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
 		"success": true,
 		"data": fiber.Map{
-			"id":         user.ID,
-			"org_id":     user.OrgID,
-			"email":      user.Email,
-			"full_name":  user.FullName,
-			"role":       user.Role,
-			"is_active":  user.IsActive,
-			"created_at": user.CreatedAt,
+			"id":          user.ID,
+			"org_id":      user.OrgID,
+			"org_name":    user.OrgName,
+			"email":       user.Email,
+			"full_name":   user.FullName,
+			"role":        user.Role,
+			"tenant_type": user.TenantType,
+			"company_id":  user.CompanyID,
+			"is_active":   user.IsActive,
+			"created_at":  user.CreatedAt,
 		},
 	})
 }
