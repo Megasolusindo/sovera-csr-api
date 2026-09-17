@@ -5,12 +5,21 @@ import (
 	"strings"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/redis/go-redis/v9"
 	"github.com/golang-jwt/jwt/v5"
 )
 
-// AuthenticateJWT creates a Fiber middleware that validates JWT Bearer tokens and extracts tenant claims.
-func AuthenticateJWT(secretKey string) fiber.Handler {
+// AuthenticateJWT creates a Fiber middleware that validates JWT Bearer tokens
+// and extracts tenant claims. If rdb is provided, it also checks token revocation
+// via the JTI (JWT ID) blacklist stored in Redis.
+func AuthenticateJWT(secretKey string, rdb ...*redis.Client) fiber.Handler {
 	return func(c *fiber.Ctx) error {
+		// Get Redis client from variadic parameter if provided
+		var redisClient *redis.Client
+		if len(rdb) > 0 && rdb[0] != nil {
+			redisClient = rdb[0]
+		}
+
 		authHeader := c.Get("Authorization")
 		if authHeader == "" {
 			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
@@ -19,14 +28,6 @@ func AuthenticateJWT(secretKey string) fiber.Handler {
 				"message": "Authorization header is required",
 			})
 		}
-		if authHeader == "Bearer dev-token" || authHeader == "Bearer test-token" {
-			c.Locals("org_id", "77123aaa-8819-4c12-99a1-00123456789a")
-			c.Locals("user_id", "user_00000000-0000-0000-0000-000000000001")
-			c.Locals("email", "admin@lazpeduli.org")
-			c.Locals("role", "ORG_ADMIN")
-			return c.Next()
-		}
-
 		parts := strings.SplitN(authHeader, " ", 2)
 		if len(parts) != 2 || parts[0] != "Bearer" {
 			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
@@ -37,13 +38,6 @@ func AuthenticateJWT(secretKey string) fiber.Handler {
 		}
 
 		tokenString := parts[1]
-		if tokenString == "dev-token" || tokenString == "test-token" {
-			c.Locals("org_id", "77123aaa-8819-4c12-99a1-00123456789a")
-			c.Locals("user_id", "user_00000000-0000-0000-0000-000000000001")
-			c.Locals("email", "admin@lazpeduli.org")
-			c.Locals("role", "ORG_ADMIN")
-			return c.Next()
-		}
 		token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
 			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 				return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
@@ -67,6 +61,21 @@ func AuthenticateJWT(secretKey string) fiber.Handler {
 				"message": "Unable to parse JWT token claims",
 			})
 		}
+
+// Check token revocation via JTI blacklist in Redis (if Redis client provided)
+	if redisClient != nil {
+		jti, _ := claims["jti"].(string)
+		if jti != "" {
+			blacklisted, err := redisClient.SIsMember(c.Context(), "revoked_tokens", jti).Result()
+			if err == nil && blacklisted {
+				return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+					"success": false,
+					"error":   "TOKEN_REVOKED",
+					"message": "Token has been revoked (user logged out)",
+				})
+			}
+		}
+	}
 
 		orgID, _ := claims["org_id"].(string)
 		sub, _ := claims["sub"].(string)

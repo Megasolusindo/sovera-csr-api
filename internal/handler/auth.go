@@ -1,6 +1,9 @@
 package handler
 
 import (
+	"context"
+	"fmt"
+	"strings"
 	"time"
 
 	"sovera-core-api/internal/model"
@@ -8,6 +11,8 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/google/uuid"
+	"github.com/redis/go-redis/v9"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -15,10 +20,11 @@ import (
 type AuthHandler struct {
 	userRepo  *repository.UserRepository
 	jwtSecret string
+	rdb         *redis.Client
 }
 
-func NewAuthHandler(userRepo *repository.UserRepository, jwtSecret string) *AuthHandler {
-	return &AuthHandler{userRepo: userRepo, jwtSecret: jwtSecret}
+func NewAuthHandler(userRepo *repository.UserRepository, jwtSecret string, rdb *redis.Client) *AuthHandler {
+	return &AuthHandler{userRepo: userRepo, jwtSecret: jwtSecret, rdb: rdb}
 }
 
 type RegisterPayload struct {
@@ -131,6 +137,7 @@ func (h *AuthHandler) Login(c *fiber.Ctx) error {
 		"email":       user.Email,
 		"role":        string(user.Role),
 		"tenant_type": string(user.TenantType),
+		"jti":         uuid.New().String(), // JWT ID for token revocation
 		"exp":         time.Now().Add(24 * time.Hour).Unix(),
 		"iat":         time.Now().Unix(),
 	}
@@ -196,6 +203,59 @@ func (h *AuthHandler) Me(c *fiber.Ctx) error {
 // POST /api/v1/auth/logout
 // Invalidates client auth token and completes operator logout session.
 func (h *AuthHandler) Logout(c *fiber.Ctx) error {
+	authHeader := c.Get("Authorization")
+	if authHeader == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"success": false,
+			"error":   "MISSING_TOKEN",
+			"message": "Authorization header is required",
+		})
+	}
+
+	parts := strings.SplitN(authHeader, " ", 2)
+	if len(parts) != 2 || parts[0] != "Bearer" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"success": false,
+			"error":   "INVALID_TOKEN_FORMAT",
+			"message": "Authorization header format must be Bearer <token>",
+		})
+	}
+
+	tokenString := parts[1]
+	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+		}
+		return []byte(h.jwtSecret), nil
+	})
+
+	if err != nil || !token.Valid {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"success": false,
+			"error":   "INVALID_TOKEN",
+			"message": "Invalid or expired token",
+		})
+	}
+
+	claims, ok := token.Claims.(jwt.MapClaims)
+	if !ok {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"success": false,
+			"error":   "INVALID_CLAIMS",
+			"message": "Unable to parse JWT claims",
+		})
+	}
+
+	jti, _ := claims["jti"].(string)
+	if jti != "" {
+		if h.rdb != nil {
+			ctx := context.Background()
+			h.rdb.SAdd(ctx, "revoked_tokens", jti)
+			// Set expiry on the JTI so the blacklist doesn't grow indefinitely
+			h.rdb.Expire(ctx, "revoked_tokens", 24*time.Hour)
+		}
+	}
+
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
 		"success": true,
 		"message": "Sesi otorisasi admin berhasil diakhiri.",
