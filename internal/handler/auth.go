@@ -21,13 +21,11 @@ func NewAuthHandler(userRepo *repository.UserRepository, jwtSecret string) *Auth
 	return &AuthHandler{userRepo: userRepo, jwtSecret: jwtSecret}
 }
 
-// RegisterPayload is the request body for POST /auth/register
 type RegisterPayload struct {
 	OrgID    string `json:"org_id"`
 	Email    string `json:"email"`
 	Password string `json:"password"`
 	FullName string `json:"full_name"`
-	Role     string `json:"role"` // ORG_ADMIN | DIRECTOR | FUNDRAISER
 }
 
 // LoginPayload is the request body for POST /auth/login
@@ -54,11 +52,16 @@ func (h *AuthHandler) Register(c *fiber.Ctx) error {
 		})
 	}
 
-	// Default role to FUNDRAISER if not specified or invalid
-	role := model.UserOrgRole(payload.Role)
-	if role != model.RoleOrgAdmin && role != model.RoleDirector && role != model.RoleFundraiser {
-		role = model.RoleFundraiser
+	if len(payload.Password) < 8 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"success": false, "error": "WEAK_PASSWORD",
+			"message": "Password must be at least 8 characters long",
+		})
 	}
+
+	// Register endpoint only allows self-registration as FUNDRAISER;
+	// ORG_ADMIN and DIRECTOR roles must be assigned by an existing admin
+	role := model.RoleFundraiser
 
 	// Hash password using bcrypt
 	hash, err := bcrypt.GenerateFromPassword([]byte(payload.Password), 12)
@@ -108,7 +111,6 @@ func (h *AuthHandler) Login(c *fiber.Ctx) error {
 
 	user, err := h.userRepo.FindUserWithTenantByEmail(c.Context(), payload.Email)
 	if err != nil {
-		// Generic error to prevent email enumeration
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
 			"success": false, "error": "INVALID_CREDENTIALS",
 			"message": "Email atau password salah",
