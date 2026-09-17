@@ -26,7 +26,11 @@ func NewTemplateHandler(repo *repository.TemplateRepository, tokenLogRepo *repos
 func (h *TemplateHandler) GetTokenUsage(c *fiber.Ctx) error {
 	orgID, ok := c.Locals("org_id").(string)
 	if !ok || orgID == "" {
-		orgID = "77123aaa-8819-4c12-99a1-00123456789a"
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"success": false,
+			"error":   "UNAUTHORIZED",
+			"message": "Organization context is required",
+		})
 	}
 
 	summary, err := h.tokenLogRepo.GetTenantTokenSummary(c.Context(), orgID)
@@ -47,7 +51,11 @@ func (h *TemplateHandler) GetTokenUsage(c *fiber.Ctx) error {
 func (h *TemplateHandler) GetTemplates(c *fiber.Ctx) error {
 	orgID, ok := c.Locals("org_id").(string)
 	if !ok || orgID == "" {
-		orgID = "77123aaa-8819-4c12-99a1-00123456789a"
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"success": false,
+			"error":   "UNAUTHORIZED",
+			"message": "Organization context is required",
+		})
 	}
 
 	template, err := h.repo.GetTenantTemplate(c.Context(), orgID)
@@ -68,7 +76,11 @@ func (h *TemplateHandler) GetTemplates(c *fiber.Ctx) error {
 func (h *TemplateHandler) UploadTemplate(c *fiber.Ctx) error {
 	orgID, ok := c.Locals("org_id").(string)
 	if !ok || orgID == "" {
-		orgID = "77123aaa-8819-4c12-99a1-00123456789a"
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"success": false,
+			"error":   "UNAUTHORIZED",
+			"message": "Organization context is required",
+		})
 	}
 
 	fileType := strings.ToLower(c.Query("type", "pptx"))
@@ -127,7 +139,11 @@ func (h *TemplateHandler) UploadTemplate(c *fiber.Ctx) error {
 func (h *TemplateHandler) ResetTemplate(c *fiber.Ctx) error {
 	orgID, ok := c.Locals("org_id").(string)
 	if !ok || orgID == "" {
-		orgID = "77123aaa-8819-4c12-99a1-00123456789a"
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"success": false,
+			"error":   "UNAUTHORIZED",
+			"message": "Organization context is required",
+		})
 	}
 
 	fileType := strings.ToLower(c.Params("type"))

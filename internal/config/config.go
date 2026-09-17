@@ -95,6 +95,8 @@ func (c *Config) Validate() []string {
 		{c.DatabaseURL, "DATABASE_URL", "database connection URL"},
 		{c.JWTSecret, "JWT_SECRET", "JWT signing secret"},
 		{c.WebhookSecretKey, "WEBHOOK_SECRET_KEY", "webhook secret key"},
+		{c.AIAPIKey, "AI_API_KEY", "AI API key"},
+		{c.OpenClawAgentToken, "OPENCLAW_AGENT_TOKEN", "OpenClaw agent token"},
 	}
 	for _, r := range required {
 		if r.value == "" {

@@ -35,7 +35,11 @@ type CreateProgramPayload struct {
 func (h *ProgramHandler) ListPrograms(c *fiber.Ctx) error {
 	orgID, ok := c.Locals("org_id").(string)
 	if !ok || orgID == "" {
-		orgID = "77123aaa-8819-4c12-99a1-00123456789a"
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"success": false,
+			"error":   "UNAUTHORIZED",
+			"message": "Organization context is required",
+		})
 	}
 
 	programs, err := h.programRepo.ListPrograms(c.Context(), orgID)
@@ -55,7 +59,11 @@ func (h *ProgramHandler) ListPrograms(c *fiber.Ctx) error {
 func (h *ProgramHandler) CreateProgram(c *fiber.Ctx) error {
 	orgID, ok := c.Locals("org_id").(string)
 	if !ok || orgID == "" {
-		orgID = "77123aaa-8819-4c12-99a1-00123456789a"
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"success": false,
+			"error":   "UNAUTHORIZED",
+			"message": "Organization context is required",
+		})
 	}
 
 	var payload CreateProgramPayload

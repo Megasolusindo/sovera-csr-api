@@ -12,4 +12,3 @@ node_modules/
 
 # Go binaries & build artifacts
 bin/
-api

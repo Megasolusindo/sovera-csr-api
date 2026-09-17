@@ -39,6 +39,8 @@ func main() {
 	if len(missing) > 0 {
 		log.Fatalf("FATAL: Required environment variables are not set: %v. Please configure them before starting the server.", missing)
 	}
+
+	isProd := cfg.Environment != "development"
 	log.Printf("Starting Sovera Core API Server in [%s] mode...", cfg.Environment)
 
 	// 2. Initialize PostgreSQL DB Pool with pgx/v5
@@ -105,6 +107,9 @@ func main() {
 	// 5. Create Rate Limiter Stores for Tenant Control
 	aiRateLimiterStore := middleware.NewRateLimiterStore()
 	generalRateLimiterStore := middleware.NewRateLimiterStore()
+	ipRateLimiterStore := middleware.NewIPRateLimiterStore()
+	ipLimit := middleware.IPRateLimit(ipRateLimiterStore, 60, 1*time.Minute, "Public API")
+	loginLimit := middleware.IPRateLimit(ipRateLimiterStore, 10, 1*time.Minute, "Login attempts")
 
 	// 6. Create Fiber Web Application
 	app := fiber.New(fiber.Config{
@@ -112,11 +117,12 @@ func main() {
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 10 * time.Second,
 		IdleTimeout:  30 * time.Second,
+		ErrorHandler: sanitizedErrorHandler(isProd),
 	})
 
 	// 7. Global Middlewares (CORS MUST BE FIRST)
 	app.Use(cors.New(cors.Config{
-		AllowOrigins:     "*",
+		AllowOrigins:     getCORSOrigins(cfg),
 		AllowHeaders:     "Origin, Content-Type, Accept, Authorization, X-Requested-With",
 		AllowMethods:     "GET, POST, HEAD, PUT, DELETE, PATCH, OPTIONS",
 		AllowCredentials: false,
@@ -147,15 +153,10 @@ func main() {
 	intelligenceRepo := repository.NewIntelligenceRepository(dbPool)
 	intelligenceHandler := handler.NewIntelligenceHandler(intelligenceRepo)
 
-	// Seed default OpenClaw AI Agent credential if DB pool is ready and token is configured
-	if dbPool != nil {
-		defaultAgentToken := cfg.OpenClawAgentToken
-		if defaultAgentToken != "" {
-			aiRepo := repository.NewAIAgentRepository(dbPool)
-			_ = aiRepo.SeedAgentCredential(context.Background(), "openclaw-research-agent", defaultAgentToken, []string{"research:create", "company:read", "csr_program:create"})
-		} else {
-			log.Println("WARNING: OPENCLAW_AGENT_TOKEN not set — skipping AI agent credential seeding")
-		}
+	// Seed default OpenClaw AI Agent credential if DB pool is ready
+	if dbPool != nil && cfg.OpenClawAgentToken != "" {
+		aiRepo := repository.NewAIAgentRepository(dbPool)
+		_ = aiRepo.SeedAgentCredential(context.Background(), "openclaw-research-agent", cfg.OpenClawAgentToken, []string{"research:create", "company:read", "csr_program:create"})
 	}
 
 	// Root & Health check routes (public)
@@ -207,10 +208,10 @@ func main() {
 	orgAIGroup.Get("/admin/conversations", orgAIChatHandler.AdminListConversations)
 	orgAIGroup.Get("/admin/conversations/:id/messages", orgAIChatHandler.AdminGetConversationMessages)
 
-	// ─── Auth Routes (PUBLIC — no JWT required) ───────────────────────────────
-	auth := apiV1.Group("/auth")
+	// ─── Auth Routes (PUBLIC — rate-limited to prevent brute force) ─────────────────
+	auth := apiV1.Group("/auth", ipLimit)
 	auth.Post("/register", authHandler.Register)
-	auth.Post("/login", authHandler.Login)
+	auth.Post("/login", loginLimit, authHandler.Login)
 	auth.Post("/logout", authHandler.Logout)
 	auth.Get("/me", middleware.AuthenticateJWT(cfg.JWTSecret), authHandler.Me)
 
@@ -289,10 +290,10 @@ func main() {
 
 	// Companies Directory & CSR Master Programs & Web Sources & ESG — semua role / public browsing
 	apiV1.Get("/stats", jwtGuard, middleware.RequireRole("SUPERADMIN"), adminHandler.GetAnalytics)
-	apiV1.Get("/companies", companyHandler.ListCompanies)
+	apiV1.Get("/companies", ipLimit, companyHandler.ListCompanies)
 	apiV1.Post("/companies", jwtGuard, middleware.RequireRole("CORP_ADMIN", "CSR_MANAGER", "SUPERADMIN"), companyHandler.CreateCompany)
-	apiV1.Get("/companies/csr-programs", middleware.RequireVisibilityAccess(cfg.JWTSecret), companyHandler.ListCSRPrograms)
-	apiV1.Get("/csr-programs", middleware.RequireVisibilityAccess(cfg.JWTSecret), companyHandler.ListCSRPrograms)
+	apiV1.Get("/companies/csr-programs", ipLimit, middleware.RequireVisibilityAccess(cfg.JWTSecret), companyHandler.ListCSRPrograms)
+	apiV1.Get("/csr-programs", ipLimit, middleware.RequireVisibilityAccess(cfg.JWTSecret), companyHandler.ListCSRPrograms)
 	apiV1.Patch("/companies/csr-programs/:id/visibility", jwtGuard, middleware.RequireRole("CORP_ADMIN", "CSR_MANAGER", "SUPERADMIN"), companyHandler.UpdateCSRProgramVisibility)
 	apiV1.Get("/sources", jwtGuard, adminHandler.ListSources)
 	apiV1.Post("/sources", jwtGuard, middleware.RequireRole("SUPERADMIN"), adminHandler.CreateScrapingJob)
@@ -393,4 +394,40 @@ func main() {
 
 	_ = app.Shutdown()
 	log.Println("Server stopped cleanly.")
+}
+
+func getCORSOrigins(cfg *config.Config) string {
+	if cfg.Environment == "development" {
+		return "*"
+	}
+	origins := getEnv("CORS_ALLOWED_ORIGINS", "")
+	if origins == "" {
+		return "https://sovera.id,https://app.sovera.id"
+	}
+	return origins
+}
+
+func getEnv(key, fallback string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return fallback
+}
+
+func sanitizedErrorHandler(isProd bool) fiber.ErrorHandler {
+	return func(c *fiber.Ctx, err error) error {
+		if isProd {
+			log.Printf("INTERNAL ERROR: %v [path=%s]", err, c.Path())
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"success": false,
+				"error":   "INTERNAL_SERVER_ERROR",
+				"message": "An internal server error occurred",
+			})
+		}
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"success": false,
+			"error":   "INTERNAL_SERVER_ERROR",
+			"message": err.Error(),
+		})
+	}
 }

@@ -63,7 +63,11 @@ type GeneratePitchPayload struct {
 func (h *DealHandler) ListDeals(c *fiber.Ctx) error {
 	orgID, ok := c.Locals("org_id").(string)
 	if !ok || orgID == "" {
-		orgID = "77123aaa-8819-4c12-99a1-00123456789a"
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"success": false,
+			"error":   "UNAUTHORIZED",
+			"message": "Organization context is required",
+		})
 	}
 
 	deals, err := h.dealRepo.ListDeals(c.Context(), orgID)
@@ -83,7 +87,11 @@ func (h *DealHandler) ListDeals(c *fiber.Ctx) error {
 func (h *DealHandler) CreateDeal(c *fiber.Ctx) error {
 	orgID, ok := c.Locals("org_id").(string)
 	if !ok || orgID == "" {
-		orgID = "77123aaa-8819-4c12-99a1-00123456789a"
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"success": false,
+			"error":   "UNAUTHORIZED",
+			"message": "Organization context is required",
+		})
 	}
 
 	var payload CreateDealPayload
@@ -122,7 +130,11 @@ func (h *DealHandler) UpdateStage(c *fiber.Ctx) error {
 	dealID := c.Params("id")
 	orgID, ok := c.Locals("org_id").(string)
 	if !ok || orgID == "" {
-		orgID = "77123aaa-8819-4c12-99a1-00123456789a"
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"success": false,
+			"error":   "UNAUTHORIZED",
+			"message": "Organization context is required",
+		})
 	}
 
 	var payload UpdateStagePayload
@@ -150,7 +162,11 @@ func (h *DealHandler) GeneratePitch(c *fiber.Ctx) error {
 	dealID := c.Params("id")
 	orgID, ok := c.Locals("org_id").(string)
 	if !ok || orgID == "" {
-		orgID = "77123aaa-8819-4c12-99a1-00123456789a"
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"success": false,
+			"error":   "UNAUTHORIZED",
+			"message": "Organization context is required",
+		})
 	}
 
 	var payload GeneratePitchPayload
@@ -199,7 +215,11 @@ func (h *DealHandler) ExportProposal(c *fiber.Ctx) error {
 	dealID := c.Params("id")
 	orgID, ok := c.Locals("org_id").(string)
 	if !ok || orgID == "" {
-		orgID = "77123aaa-8819-4c12-99a1-00123456789a"
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"success": false,
+			"error":   "UNAUTHORIZED",
+			"message": "Organization context is required",
+		})
 	}
 
 	format := c.Query("format", "docx")

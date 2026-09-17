@@ -94,3 +94,77 @@ func TenantRateLimit(store *RateLimiterStore, limit int, windowDuration time.Dur
 		return c.Next()
 	}
 }
+
+type IPRateLimiterStore struct {
+	mu    sync.RWMutex
+	ips   map[string]*tenantWindow
+}
+
+func NewIPRateLimiterStore() *IPRateLimiterStore {
+	store := &IPRateLimiterStore{
+		ips: make(map[string]*tenantWindow),
+	}
+	go func() {
+		ticker := time.NewTicker(10 * time.Minute)
+		for range ticker.C {
+			store.mu.Lock()
+			now := time.Now()
+			for ip, tw := range store.ips {
+				tw.mu.Lock()
+				if now.Sub(tw.windowStart) > 15*time.Minute {
+					delete(store.ips, ip)
+				}
+				tw.mu.Unlock()
+			}
+			store.mu.Unlock()
+		}
+	}()
+	return store
+}
+
+func IPRateLimit(store *IPRateLimiterStore, limit int, windowDuration time.Duration, resourceName string) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		ip := c.IP()
+		if ip == "" {
+			ip = "unknown"
+		}
+
+		store.mu.Lock()
+		tw, exists := store.ips[ip]
+		if !exists {
+			tw = &tenantWindow{
+				windowStart: time.Now(),
+				count:       0,
+			}
+			store.ips[ip] = tw
+		}
+		store.mu.Unlock()
+
+		tw.mu.Lock()
+		now := time.Now()
+		if now.Sub(tw.windowStart) > windowDuration {
+			tw.windowStart = now
+			tw.count = 0
+		}
+
+		if tw.count >= limit {
+			resetInSeconds := int((windowDuration - now.Sub(tw.windowStart)).Seconds())
+			if resetInSeconds < 1 {
+				resetInSeconds = 1
+			}
+			tw.mu.Unlock()
+
+			c.Set("Retry-After", fmt.Sprintf("%d", resetInSeconds))
+			return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{
+				"success": false,
+				"error":   "RATE_LIMIT_EXCEEDED",
+				"message": fmt.Sprintf("Rate limit for %s exceeded (%d req/%v). Try again in %d seconds.", resourceName, limit, windowDuration, resetInSeconds),
+			})
+		}
+
+		tw.count++
+		tw.mu.Unlock()
+
+		return c.Next()
+	}
+}
