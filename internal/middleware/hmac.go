@@ -14,9 +14,13 @@ import (
 // VerifyHMAC creates a Fiber middleware that validates incoming webhooks using multi-layer verification.
 func VerifyHMAC(secretKey string) fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		// Bypass verification if secret key is intentionally empty or disabled
+		// Fail closed if secret key is not configured
 		if secretKey == "" {
-			return c.Next()
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"success": false,
+				"error":   "WEBHOOK_NOT_CONFIGURED",
+				"message": "Webhook secret key is not configured on the server",
+			})
 		}
 
 		// 1. Check Query Parameter Token (?secret=... or ?token=...)

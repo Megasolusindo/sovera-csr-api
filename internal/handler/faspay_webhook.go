@@ -4,15 +4,17 @@ import (
 	"encoding/json"
 
 	"github.com/gofiber/fiber/v2"
+	"sovera-core-api/internal/payment"
 	"sovera-core-api/internal/service"
 )
 
 type FaspayWebhookHandler struct {
-	subService *service.SubscriptionService
+	subService    *service.SubscriptionService
+	paymentGateway payment.PaymentGateway
 }
 
-func NewFaspayWebhookHandler(subService *service.SubscriptionService) *FaspayWebhookHandler {
-	return &FaspayWebhookHandler{subService: subService}
+func NewFaspayWebhookHandler(subService *service.SubscriptionService, paymentGateway payment.PaymentGateway) *FaspayWebhookHandler {
+	return &FaspayWebhookHandler{subService: subService, paymentGateway: paymentGateway}
 }
 
 type FaspayWebhookPayload struct {
@@ -37,20 +39,26 @@ func (h *FaspayWebhookHandler) HandleFaspayWebhook(c *fiber.Ctx) error {
 	var payload FaspayWebhookPayload
 	if err := json.Unmarshal(c.Body(), &payload); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"responseCode": "4002700", "responseMessage": "Failed to parse Faspay webhook JSON payload: " + err.Error(),
-			"status": "error", "message": "Failed to parse Faspay webhook JSON payload: " + err.Error(),
+			"responseCode": "4002700", "responseMessage": "Failed to parse Faspay webhook JSON payload",
+			"status": "error",
 		})
 	}
 
-	orderID := payload.OrderID
-	if orderID == "" {
-		orderID = payload.OriginalPartnerReferenceNo
+	if h.paymentGateway != nil && !h.paymentGateway.VerifyWebhookSignature(payload.OrderID, payload.StatusCode, payload.GrossAmount, payload.Signature) {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"responseCode": "4012700", "responseMessage": "Invalid Faspay webhook signature",
+			"status": "error",
+		})
 	}
 
-	if orderID == "" {
+	if payload.OrderID == "" {
+		payload.OrderID = payload.OriginalPartnerReferenceNo
+	}
+
+	if payload.OrderID == "" {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"responseCode": "4002700", "responseMessage": "order_id or originalPartnerReferenceNo is required",
-			"status": "error", "message": "order_id or originalPartnerReferenceNo is required",
+			"status": "error",
 		})
 	}
 
@@ -65,10 +73,10 @@ func (h *FaspayWebhookHandler) HandleFaspayWebhook(c *fiber.Ctx) error {
 		payload.PaymentFlagStatus == "00"
 
 	if isSuccess {
-		if err := h.subService.ProcessFaspayWebhook(c.Context(), orderID, paymentType, payload); err != nil {
+		if err := h.subService.ProcessFaspayWebhook(c.Context(), payload.OrderID, paymentType, payload); err != nil {
 			return c.Status(fiber.StatusUnprocessableEntity).JSON(fiber.Map{
 				"responseCode": "5002700", "responseMessage": err.Error(),
-				"status": "error", "message": err.Error(),
+				"status": "error",
 			})
 		}
 	}

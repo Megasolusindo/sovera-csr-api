@@ -386,7 +386,7 @@ func (c *Client) CreateCheckout(ctx context.Context, orderID string, amount int6
 
 func (c *Client) VerifyWebhookSignature(orderID, statusCode, grossAmount, signature string) bool {
 	if c.merchantKey == "" {
-		return true
+		return false
 	}
 	raw := fmt.Sprintf("%s%s%s%s", c.merchantID, orderID, grossAmount, c.merchantKey)
 	hash := sha256.Sum256([]byte(raw))

@@ -29,15 +29,6 @@ func OrgAIAuthMiddleware(secretKey string) fiber.Handler {
 			tokenString = authHeader
 		}
 
-		// Support dev/testing bypass tokens
-		if tokenString == "dev-token" || tokenString == "test-token" {
-			c.Locals("org_id", "77123aaa-8819-4c12-99a1-00123456789a")
-			c.Locals("user_id", "aaaaaaaa-0001-4000-a000-000000000001")
-			c.Locals("email", "admin@laz.id")
-			c.Locals("role", "ORG_ADMIN")
-			return c.Next()
-		}
-
 		token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
 			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 				return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])

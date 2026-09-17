@@ -35,6 +35,10 @@ import (
 func main() {
 	// 1. Load Environment Configuration
 	cfg := config.LoadConfig()
+	missing := cfg.Validate()
+	if len(missing) > 0 {
+		log.Fatalf("FATAL: Required environment variables are not set: %v. Please configure them before starting the server.", missing)
+	}
 	log.Printf("Starting Sovera Core API Server in [%s] mode...", cfg.Environment)
 
 	// 2. Initialize PostgreSQL DB Pool with pgx/v5
@@ -138,14 +142,20 @@ func main() {
 	urlVerifierHandler := handler.NewURLVerifierHandler(linkedinVerifier)
 	keyPersonHandler := handler.NewKeyPersonHandler(keyPersonService)
 	subHandler := handler.NewSubscriptionHandler(subService)
-	paymentWebhookHandler := handler.NewPaymentWebhookHandler(subService)
-	faspayWebhookHandler := handler.NewFaspayWebhookHandler(subService)
+	paymentWebhookHandler := handler.NewPaymentWebhookHandler(subService, paymentGateway)
+	faspayWebhookHandler := handler.NewFaspayWebhookHandler(subService, paymentGateway)
+	intelligenceRepo := repository.NewIntelligenceRepository(dbPool)
+	intelligenceHandler := handler.NewIntelligenceHandler(intelligenceRepo)
 
-	// Seed default OpenClaw AI Agent credential if DB pool is ready
+	// Seed default OpenClaw AI Agent credential if DB pool is ready and token is configured
 	if dbPool != nil {
-		aiRepo := repository.NewAIAgentRepository(dbPool)
-		defaultAgentToken := "openclaw_agent_live_key_998877665544"
-		_ = aiRepo.SeedAgentCredential(context.Background(), "openclaw-research-agent", defaultAgentToken, []string{"research:create", "company:read", "csr_program:create"})
+		defaultAgentToken := cfg.OpenClawAgentToken
+		if defaultAgentToken != "" {
+			aiRepo := repository.NewAIAgentRepository(dbPool)
+			_ = aiRepo.SeedAgentCredential(context.Background(), "openclaw-research-agent", defaultAgentToken, []string{"research:create", "company:read", "csr_program:create"})
+		} else {
+			log.Println("WARNING: OPENCLAW_AGENT_TOKEN not set — skipping AI agent credential seeding")
+		}
 	}
 
 	// Root & Health check routes (public)
@@ -216,8 +226,8 @@ func main() {
 	tenantGeneralLimit := middleware.TenantRateLimit(generalRateLimiterStore, 120, 1*time.Minute, "API General")
 	tenantAILimit := middleware.TenantRateLimit(aiRateLimiterStore, 10, 1*time.Minute, "Generasi AI Proposal & Pitch")
 
-	// Platform Admin Console — Full System Control & Analytics
-	adminGroup := apiV1.Group("/admin")
+	// Platform Admin Console — Full System Control & Analytics (requires SUPERADMIN role)
+	adminGroup := apiV1.Group("/admin", jwtGuard, middleware.RequireRole("SUPERADMIN"))
 	adminGroup.Get("/plans", subHandler.ListPlans)
 	adminGroup.Post("/plans", subHandler.UpsertPlan)
 	adminGroup.Get("/organizations", adminHandler.ListOrganizations)
@@ -278,51 +288,52 @@ func main() {
 	apiV1.Patch("/corporate/proposals/:id/status", jwtGuard, proposalHandler.UpdateProposalStatus)
 
 	// Companies Directory & CSR Master Programs & Web Sources & ESG — semua role / public browsing
-	apiV1.Get("/stats", adminHandler.GetAnalytics)
+	apiV1.Get("/stats", jwtGuard, middleware.RequireRole("SUPERADMIN"), adminHandler.GetAnalytics)
 	apiV1.Get("/companies", companyHandler.ListCompanies)
-	apiV1.Post("/companies", companyHandler.CreateCompany)
-	apiV1.Get("/companies/csr-programs", companyHandler.ListCSRPrograms)
-	apiV1.Get("/csr-programs", companyHandler.ListCSRPrograms)
-	apiV1.Get("/sources", adminHandler.ListSources)
-	apiV1.Post("/sources", adminHandler.CreateScrapingJob)
-	apiV1.Get("/documents", adminHandler.ListDocuments)
-	apiV1.Get("/scraping-jobs", adminHandler.ListScrapingJobs)
-	apiV1.Post("/scraping-jobs", adminHandler.CreateScrapingJob)
-	apiV1.Get("/esg-intelligence", adminHandler.GetESGIntelligence)
+	apiV1.Post("/companies", jwtGuard, middleware.RequireRole("CORP_ADMIN", "CSR_MANAGER", "SUPERADMIN"), companyHandler.CreateCompany)
+	apiV1.Get("/companies/csr-programs", middleware.RequireVisibilityAccess(cfg.JWTSecret), companyHandler.ListCSRPrograms)
+	apiV1.Get("/csr-programs", middleware.RequireVisibilityAccess(cfg.JWTSecret), companyHandler.ListCSRPrograms)
+	apiV1.Patch("/companies/csr-programs/:id/visibility", jwtGuard, middleware.RequireRole("CORP_ADMIN", "CSR_MANAGER", "SUPERADMIN"), companyHandler.UpdateCSRProgramVisibility)
+	apiV1.Get("/sources", jwtGuard, adminHandler.ListSources)
+	apiV1.Post("/sources", jwtGuard, middleware.RequireRole("SUPERADMIN"), adminHandler.CreateScrapingJob)
+	apiV1.Get("/documents", jwtGuard, adminHandler.ListDocuments)
+	apiV1.Get("/scraping-jobs", jwtGuard, adminHandler.ListScrapingJobs)
+	apiV1.Post("/scraping-jobs", jwtGuard, middleware.RequireRole("SUPERADMIN"), adminHandler.CreateScrapingJob)
+	apiV1.Get("/esg-intelligence", jwtGuard, adminHandler.GetESGIntelligence)
 
 	// Key Person & Social Signals (must be placed before /companies/:id)
-	apiV1.Get("/companies/:id/key-persons", keyPersonHandler.ListKeyPersons)
-	apiV1.Post("/companies/:id/key-persons", keyPersonHandler.CreateKeyPerson)
-	apiV1.Get("/companies/:id/key-person-signals", keyPersonHandler.ListSocialSignals)
-	apiV1.Post("/companies/:id/key-person-signals", keyPersonHandler.IngestSocialSignal)
-	apiV1.Put("/key-persons/:id", keyPersonHandler.UpdateKeyPerson)
-	apiV1.Delete("/key-persons/:id", keyPersonHandler.DeleteKeyPerson)
+	apiV1.Get("/companies/:id/key-persons", jwtGuard, keyPersonHandler.ListKeyPersons)
+	apiV1.Post("/companies/:id/key-persons", jwtGuard, middleware.RequireRole("CORP_ADMIN", "CSR_MANAGER", "SUPERADMIN"), keyPersonHandler.CreateKeyPerson)
+	apiV1.Get("/companies/:id/key-person-signals", jwtGuard, keyPersonHandler.ListSocialSignals)
+	apiV1.Post("/companies/:id/key-person-signals", jwtGuard, middleware.RequireRole("CORP_ADMIN", "CSR_MANAGER", "SUPERADMIN"), keyPersonHandler.IngestSocialSignal)
+	apiV1.Put("/key-persons/:id", jwtGuard, middleware.RequireRole("CORP_ADMIN", "CSR_MANAGER", "SUPERADMIN"), keyPersonHandler.UpdateKeyPerson)
+	apiV1.Delete("/key-persons/:id", jwtGuard, middleware.RequireRole("CORP_ADMIN", "CSR_MANAGER", "SUPERADMIN"), keyPersonHandler.DeleteKeyPerson)
 
 	apiV1.Get("/companies/:id", companyHandler.GetCompany)
-	apiV1.Put("/companies/:id", companyHandler.UpdateCompany)
-	apiV1.Patch("/companies/:id", companyHandler.UpdateCompany)
+	apiV1.Put("/companies/:id", jwtGuard, middleware.RequireRole("CORP_ADMIN", "CSR_MANAGER", "SUPERADMIN"), companyHandler.UpdateCompany)
+	apiV1.Patch("/companies/:id", jwtGuard, middleware.RequireRole("CORP_ADMIN", "CSR_MANAGER", "SUPERADMIN"), companyHandler.UpdateCompany)
 
-	apiV1.Post("/url/verify-linkedin", urlVerifierHandler.VerifyLinkedInURL)
+	apiV1.Post("/url/verify-linkedin", jwtGuard, urlVerifierHandler.VerifyLinkedInURL)
 	apiV1.Get("/url/verify-linkedin", urlVerifierHandler.VerifyLinkedInURL)
-	apiV1.Post("/url/verify-linkedin-batch", companyHandler.TriggerBatchLinkedInVerification)
-	apiV1.Post("/url/discover-linkedin-batch", companyHandler.TriggerBatchLinkedInDiscovery)
-	apiV1.Get("/url/linkedin-stats", companyHandler.GetLinkedInStats)
+	apiV1.Post("/url/verify-linkedin-batch", jwtGuard, companyHandler.TriggerBatchLinkedInVerification)
+	apiV1.Post("/url/discover-linkedin-batch", jwtGuard, companyHandler.TriggerBatchLinkedInDiscovery)
+	apiV1.Get("/url/linkedin-stats", jwtGuard, companyHandler.GetLinkedInStats)
 
-	apiV1.Post("/url/verify-instagram", urlVerifierHandler.VerifyInstagramURL)
+	apiV1.Post("/url/verify-instagram", jwtGuard, urlVerifierHandler.VerifyInstagramURL)
 	apiV1.Get("/url/verify-instagram", urlVerifierHandler.VerifyInstagramURL)
-	apiV1.Post("/url/verify-instagram-batch", companyHandler.TriggerBatchInstagramVerification)
-	apiV1.Post("/url/discover-instagram-batch", companyHandler.TriggerBatchInstagramDiscovery)
-	apiV1.Get("/url/instagram-stats", companyHandler.GetInstagramStats)
+	apiV1.Post("/url/verify-instagram-batch", jwtGuard, companyHandler.TriggerBatchInstagramVerification)
+	apiV1.Post("/url/discover-instagram-batch", jwtGuard, companyHandler.TriggerBatchInstagramDiscovery)
+	apiV1.Get("/url/instagram-stats", jwtGuard, companyHandler.GetInstagramStats)
 
-	apiV1.Post("/url/verify-facebook", companyHandler.VerifyFacebookURL)
-	apiV1.Get("/url/verify-facebook", companyHandler.VerifyFacebookURL)
-	apiV1.Post("/url/verify-facebook-batch", companyHandler.TriggerBatchFacebookVerification)
-	apiV1.Get("/url/facebook-stats", companyHandler.GetFacebookStats)
+	apiV1.Post("/url/verify-facebook", jwtGuard, companyHandler.VerifyFacebookURL)
+	apiV1.Get("/url/verify-facebook", jwtGuard, companyHandler.VerifyFacebookURL)
+	apiV1.Post("/url/verify-facebook-batch", jwtGuard, companyHandler.TriggerBatchFacebookVerification)
+	apiV1.Get("/url/facebook-stats", jwtGuard, companyHandler.GetFacebookStats)
 
-	apiV1.Post("/url/verify-youtube", companyHandler.VerifyYoutubeURL)
-	apiV1.Get("/url/verify-youtube", companyHandler.VerifyYoutubeURL)
-	apiV1.Post("/url/verify-youtube-batch", companyHandler.TriggerBatchYoutubeVerification)
-	apiV1.Get("/url/youtube-stats", companyHandler.GetYoutubeStats)
+	apiV1.Post("/url/verify-youtube", jwtGuard, companyHandler.VerifyYoutubeURL)
+	apiV1.Get("/url/verify-youtube", jwtGuard, companyHandler.VerifyYoutubeURL)
+	apiV1.Post("/url/verify-youtube-batch", jwtGuard, companyHandler.TriggerBatchYoutubeVerification)
+	apiV1.Get("/url/youtube-stats", jwtGuard, companyHandler.GetYoutubeStats)
 
 
 
@@ -330,6 +341,14 @@ func main() {
 	// Corporate Intelligence Feeds — semua role
 	apiV1.Get("/signals", jwtGuard, tenantGeneralLimit, signalHandler.ListSignals)
 	apiV1.Get("/signals/:id/match-programs", jwtGuard, tenantGeneralLimit, signalHandler.MatchPrograms)
+
+	// CSR Intelligence Workspace (/api/v1/intelligence/*)
+	intelligenceGroup := apiV1.Group("/intelligence", jwtGuard)
+	intelligenceGroup.Get("/overview", intelligenceHandler.GetOverview)
+	intelligenceGroup.Get("/organizations", intelligenceHandler.ListOrganizations)
+	intelligenceGroup.Get("/programs", intelligenceHandler.ListPrograms)
+	intelligenceGroup.Get("/trends", intelligenceHandler.GetTrends)
+	intelligenceGroup.Post("/saved", intelligenceHandler.SaveItem)
 
 	// Institution Programs — GET: semua role | POST: ORG_ADMIN & DIRECTOR only
 	apiV1.Get("/programs", jwtGuard, tenantGeneralLimit, programHandler.ListPrograms)

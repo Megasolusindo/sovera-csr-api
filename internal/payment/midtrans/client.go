@@ -171,8 +171,7 @@ type WebhookNotification struct {
 // VerifySignature checks SHA512(order_id + status_code + gross_amount + server_key).
 func (c *Client) VerifySignature(n *WebhookNotification) bool {
 	if c.serverKey == "" {
-		// Accept in dev mode if key is empty
-		return true
+		return false
 	}
 	raw := n.OrderID + n.StatusCode + n.GrossAmount + c.serverKey
 	sum := sha512.Sum512([]byte(raw))

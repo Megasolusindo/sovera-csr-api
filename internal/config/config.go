@@ -35,6 +35,7 @@ type Config struct {
 	FaspayMerchantKey   string
 	FaspayIsProduction  bool
 	FaspayReturnURL     string
+	OpenClawAgentToken  string
 }
 
 func LoadConfig() *Config {
@@ -46,20 +47,20 @@ func LoadConfig() *Config {
 	return &Config{
 		Port:                 getEnv("PORT", "4000"),
 		Environment:          getEnv("NODE_ENV", "development"),
-		DatabaseURL:          getEnv("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/sovera_db?sslmode=disable"),
+		DatabaseURL:          getEnv("DATABASE_URL", ""),
 		RedisURL:             getEnv("REDIS_URL", "localhost:6379"),
-		WebhookSecretKey:     getEnv("WEBHOOK_SECRET_KEY", "super_secret_crawler_key_123"),
-		JWTSecret:            getEnv("JWT_SECRET", "super_secret_jwt_key_enterprise"),
+		WebhookSecretKey:     getEnv("WEBHOOK_SECRET_KEY", ""),
+		JWTSecret:            getEnv("JWT_SECRET", ""),
 		AIAPIKey:             getEnv("AI_API_KEY", ""),
 		ScraperServiceURL:    getEnv("SCRAPER_SERVICE_URL", "https://api-scraper.megasolusindo.com/api/v1/scrape-tasks"),
-		ScraperAPIKey:        getEnv("SCRAPER_API_KEY", "change-me"),
+		ScraperAPIKey:        getEnv("SCRAPER_API_KEY", ""),
 		SerperAPIKey:         getEnv("SERPER_API_KEY", ""),
-		WebhookURL:           getEnv("WEBHOOK_URL", "http://host.docker.internal:4000/api/v1/webhooks/crawler?secret=super_secret_crawler_key_123"),
-		S3Endpoint:           getEnv("S3_ENDPOINT", "http://10.10.29.177:9000"),
+		WebhookURL:           getEnv("WEBHOOK_URL", ""),
+		S3Endpoint:           getEnv("S3_ENDPOINT", "http://127.0.0.1:9000"),
 		S3Bucket:             getEnv("S3_BUCKET", "sovera-templates"),
 		S3Region:             getEnv("S3_REGION", "us-east-1"),
-		S3AccessKey:          getEnv("S3_ACCESS_KEY", "minioadmin"),
-		S3SecretKey:          getEnv("S3_SECRET_KEY", "minioadmin"),
+		S3AccessKey:          getEnv("S3_ACCESS_KEY", ""),
+		S3SecretKey:          getEnv("S3_SECRET_KEY", ""),
 		StorageLocalDir:      getEnv("STORAGE_LOCAL_DIR", "/tmp/sovera_storage"),
 		TelegramBotToken:     getEnv("TELEGRAM_BOT_TOKEN", ""),
 		TelegramChatID:       getEnv("TELEGRAM_CHAT_ID", ""),
@@ -67,10 +68,11 @@ func LoadConfig() *Config {
 		MidtransClientKey:    getEnv("MIDTRANS_CLIENT_KEY", ""),
 		MidtransIsProduction: getEnv("MIDTRANS_IS_PRODUCTION", "false") == "true",
 		ActivePaymentGateway: getEnv("ACTIVE_PAYMENT_GATEWAY", "midtrans"),
-		FaspayMerchantID:    getEnv("FASPAY_MERCHANT_ID", ""),
-		FaspayMerchantKey:   getEnv("FASPAY_MERCHANT_KEY", ""),
-		FaspayIsProduction:  getEnv("FASPAY_IS_PRODUCTION", "false") == "true",
-		FaspayReturnURL:     getEnv("FASPAY_RETURN_URL", "https://sovera.id/settings/billing"),
+		FaspayMerchantID:     getEnv("FASPAY_MERCHANT_ID", ""),
+		FaspayMerchantKey:    getEnv("FASPAY_MERCHANT_KEY", ""),
+		FaspayIsProduction:   getEnv("FASPAY_IS_PRODUCTION", "false") == "true",
+		FaspayReturnURL:      getEnv("FASPAY_RETURN_URL", "https://sovera.id/settings/billing"),
+		OpenClawAgentToken:   getEnv("OPENCLAW_AGENT_TOKEN", ""),
 	}
 }
 
@@ -79,4 +81,25 @@ func getEnv(key, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+// Validate ensures all required secrets and settings are present.
+// It returns a list of missing required environment variables.
+func (c *Config) Validate() []string {
+	var missing []string
+	required := []struct {
+		value    string
+		envKey   string
+		friendly string
+	}{
+		{c.DatabaseURL, "DATABASE_URL", "database connection URL"},
+		{c.JWTSecret, "JWT_SECRET", "JWT signing secret"},
+		{c.WebhookSecretKey, "WEBHOOK_SECRET_KEY", "webhook secret key"},
+	}
+	for _, r := range required {
+		if r.value == "" {
+			missing = append(missing, r.envKey)
+		}
+	}
+	return missing
 }
