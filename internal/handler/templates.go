@@ -1,7 +1,9 @@
 package handler
 
 import (
+	"fmt"
 	"io"
+	"path/filepath"
 	"strings"
 
 	"github.com/gofiber/fiber/v2"
@@ -98,6 +100,30 @@ func (h *TemplateHandler) UploadTemplate(c *fiber.Ctx) error {
 			"success": false,
 			"error":   "NO_FILE",
 			"message": "Please attach a valid .pptx or .docx template file",
+		})
+	}
+
+	// File size limit: 10MB max
+	const maxFileSize = 10 << 20 // 10MB
+	if file.Size > maxFileSize {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"success": false,
+			"error":   "FILE_TOO_LARGE",
+			"message": fmt.Sprintf("File size must be less than %dMB", maxFileSize>>20),
+		})
+	}
+
+	// Validate actual file extension matches declared type
+	extension := strings.ToLower(filepath.Ext(file.Filename))
+	validExtensions := map[string]bool{
+		".pptx": true,
+		".docx": true,
+	}
+	if !validExtensions[extension] {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"success": false,
+			"error":   "INVALID_EXTENSION",
+			"message": fmt.Sprintf("File extension must be .pptx or .docx, got: %s", extension),
 		})
 	}
 
