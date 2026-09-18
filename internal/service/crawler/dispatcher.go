@@ -5,13 +5,65 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
 	"sovera-core-api/internal/config"
 	"sovera-core-api/internal/model"
 )
+
+// isBlockedHost checks if a hostname should be blocked to prevent SSRF attacks.
+// Blocks localhost, loopback, link-local, and cloud metadata endpoints.
+// If DNS lookup fails, the URL is allowed (fallback to permissive mode).
+func isBlockedHost(hostname string) bool {
+	if hostname == "" {
+		return true
+	}
+	if hostname == "localhost" {
+		return true
+	}
+	lower := strings.ToLower(hostname)
+	for _, blocked := range []string{"metadata.google.internal", "metadata", "kubernetes", "kubernetes.default", "kubernetes.default.svc", "consul", "etcd", "vault"} {
+		if lower == blocked || strings.HasPrefix(lower, blocked+".") {
+			return true
+		}
+	}
+	// Allow if DNS lookup fails (fallback to permissive mode)
+	ips, err := net.LookupIP(hostname)
+	if err != nil {
+		return false
+	}
+	for _, ip := range ips {
+		if isPrivateOrLoopbackIP(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+func isPrivateOrLoopbackIP(ip net.IP) bool {
+	if ip.IsLoopback() {
+		return true
+	}
+	if ip.IsLinkLocalUnicast() {
+		return true
+	}
+	if ip.IsPrivate() {
+		return true
+	}
+	if v4 := ip.To4(); v4 != nil {
+		if v4[0] == 0 {
+			return true
+		}
+	}
+	if ip.IsUnspecified() {
+		return true
+	}
+	return false
+}
 
 type Dispatcher struct {
 	cfg        *config.Config
@@ -42,6 +94,16 @@ func (d *Dispatcher) getEndpointURL(endpointPath string) string {
 }
 
 func (d *Dispatcher) sendRequest(ctx context.Context, method, targetURL string, payload interface{}) (*http.Response, error) {
+	// Validate URL to prevent SSRF (Server-Side Request Forgery)
+	if isBlockedHost(targetURL) {
+		return nil, fmt.Errorf("blocked: URL contains disallowed host")
+	}
+
+	parsed, err := url.Parse(targetURL)
+	if err != nil || parsed.Host == "" {
+		return nil, fmt.Errorf("invalid URL syntax: %w", err)
+	}
+
 	var bodyReader *bytes.Buffer
 	if payload != nil {
 		bodyBytes, err := json.Marshal(payload)
