@@ -13,6 +13,8 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/cors"
 	"github.com/gofiber/fiber/v2/middleware/logger"
 	"github.com/gofiber/fiber/v2/middleware/recover"
+	"github.com/redis/go-redis/v9"
+
 	"github.com/hibiken/asynq"
 
 	"sovera-core-api/internal/config"
@@ -66,6 +68,12 @@ func main() {
 	asynqClient := asynq.NewClient(asynq.RedisClientOpt{Addr: cfg.RedisURL})
 	defer asynqClient.Close()
 
+	// 4. Initialize Redis client for token blacklist
+	rdb := redis.NewClient(&redis.Options{
+		Addr: cfg.RedisURL,
+	})
+	defer rdb.Close()
+
 	// 4. Initialize Services & Repositories
 	midtransClient := midtrans.NewClient(cfg.MidtransServerKey, cfg.MidtransClientKey, cfg.MidtransIsProduction)
 	paymentGateway := payment.NewGatewayFactory(cfg)
@@ -110,6 +118,7 @@ func main() {
 	ipRateLimiterStore := middleware.NewIPRateLimiterStore()
 	ipLimit := middleware.IPRateLimit(ipRateLimiterStore, 60, 1*time.Minute, "Public API")
 	loginLimit := middleware.IPRateLimit(ipRateLimiterStore, 10, 1*time.Minute, "Login attempts")
+	registerLimit := middleware.IPRateLimit(ipRateLimiterStore, 5, 1*time.Minute, "Registration attempts")
 
 	// 6. Create Fiber Web Application
 	app := fiber.New(fiber.Config{
@@ -118,6 +127,7 @@ func main() {
 		WriteTimeout: 10 * time.Second,
 		IdleTimeout:  30 * time.Second,
 		ErrorHandler: sanitizedErrorHandler(isProd),
+		BodyLimit:    10 * 1024 * 1024, // 10MB max request body
 	})
 
 	// 7. Global Middlewares (CORS MUST BE FIRST)
@@ -150,7 +160,7 @@ func main() {
 	signalHandler := handler.NewSignalHandler(signalRepo)
 	programHandler := handler.NewProgramHandler(programRepo, geminiService)
 	dealHandler := handler.NewDealHandler(dealRepo, programRepo, signalRepo, templateRepo, tokenLogRepo, storageService, geminiService, docExporter)
-	authHandler := handler.NewAuthHandler(userRepo, cfg.JWTSecret)
+	authHandler := handler.NewAuthHandler(userRepo, cfg.JWTSecret, rdb)
 	linkedinVerifier := urlverifier.NewLinkedInVerifier()
 	companyHandler := handler.NewCompanyHandler(companyRepo, companyCSRProgramRepo, linkedinVerifier)
 	templateHandler := handler.NewTemplateHandler(templateRepo, tokenLogRepo, storageService)
@@ -221,11 +231,11 @@ func main() {
 	orgAIGroup.Get("/admin/conversations/:id/messages", orgAIChatHandler.AdminGetConversationMessages)
 
 	// ─── Auth Routes (PUBLIC — rate-limited to prevent brute force) ─────────────────
-	auth := apiV1.Group("/auth", ipLimit)
-	auth.Post("/register", authHandler.Register)
+	auth := apiV1.Group("/auth")
+	auth.Post("/register", registerLimit, authHandler.Register)
 	auth.Post("/login", loginLimit, authHandler.Login)
 	auth.Post("/logout", authHandler.Logout)
-	auth.Get("/me", middleware.AuthenticateJWT(cfg.JWTSecret), authHandler.Me)
+	auth.Get("/me", middleware.AuthenticateJWT(cfg.JWTSecret, rdb), authHandler.Me)
 
 	// ─── Webhook Ingestion (Protected by HMAC Verification) ──────────────────
 	apiV1.Post(
@@ -235,7 +245,7 @@ func main() {
 	)
 
 	// ─── JWT-Protected Routes ─────────────────────────────────────────────────
-	jwtGuard := middleware.AuthenticateJWT(cfg.JWTSecret)
+	jwtGuard := middleware.AuthenticateJWT(cfg.JWTSecret, rdb)
 	tenantGeneralLimit := middleware.TenantRateLimit(generalRateLimiterStore, 120, 1*time.Minute, "API General")
 	tenantAILimit := middleware.TenantRateLimit(aiRateLimiterStore, 10, 1*time.Minute, "Generasi AI Proposal & Pitch")
 
