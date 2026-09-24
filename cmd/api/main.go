@@ -176,6 +176,12 @@ func main() {
 	faspayWebhookHandler := handler.NewFaspayWebhookHandler(subService, paymentGateway)
 	intelligenceRepo := repository.NewIntelligenceRepository(dbPool)
 	intelligenceHandler := handler.NewIntelligenceHandler(intelligenceRepo)
+	kbliRepo := repository.NewKBLIRepository(dbPool)
+	kbliHandler := handler.NewKBLIHandler(kbliRepo)
+	ahuRepo := repository.NewAHURepository(dbPool)
+	ahuHandler := handler.NewAHUHandler(ahuRepo)
+	ossRepo := repository.NewOSSRepository(dbPool)
+	ossHandler := handler.NewOSSHandler(ossRepo)
 
 	// Seed default OpenClaw AI Agent credential if DB pool is ready
 	if dbPool != nil && cfg.OpenClawAgentToken != "" {
@@ -347,6 +353,31 @@ func main() {
 	apiV1.Post("/companies/:id/key-person-signals", jwtGuard, middleware.RequireRole("CORP_ADMIN", "CSR_MANAGER", "SUPERADMIN", "ORG_ADMIN"), keyPersonHandler.IngestSocialSignal)
 	apiV1.Put("/key-persons/:id", jwtGuard, middleware.RequireRole("CORP_ADMIN", "CSR_MANAGER", "SUPERADMIN", "ORG_ADMIN"), keyPersonHandler.UpdateKeyPerson)
 	apiV1.Delete("/key-persons/:id", jwtGuard, middleware.RequireRole("CORP_ADMIN", "CSR_MANAGER", "SUPERADMIN", "ORG_ADMIN"), keyPersonHandler.DeleteKeyPerson)
+
+	// Corporate Graph & Hierarchy Endpoints
+	apiV1.Get("/companies/:id/hierarchy", companyHandler.GetCompanyHierarchy)
+	apiV1.Get("/companies/:id/subsidiaries", companyHandler.GetCompanySubsidiaries)
+	apiV1.Post("/companies/link-parent", jwtGuard, middleware.RequireRole("CORP_ADMIN", "CSR_MANAGER", "SUPERADMIN", "ORG_ADMIN"), companyHandler.LinkParentSubsidiary)
+	apiV1.Post("/companies/auto-link-groups", jwtGuard, middleware.RequireRole("SUPERADMIN", "ORG_ADMIN"), companyHandler.AutoLinkCorporateGroups)
+
+	// KBLI Reference Dataset & Company Mapping Endpoints
+	apiV1.Get("/kbli", kbliHandler.ListKBLIReferences)
+	apiV1.Get("/kbli/search", kbliHandler.SearchKBLI)
+	apiV1.Get("/kbli/:code", kbliHandler.GetKBLIByCode)
+	apiV1.Post("/companies/:id/kbli", jwtGuard, kbliHandler.LinkCompanyKBLI)
+
+	// AHU Kemenkumham Corporate Registry & Entity Resolution Endpoints
+	apiV1.Get("/ahu/search", ahuHandler.SearchAHUByName)
+	apiV1.Get("/ahu/:ahu_number", ahuHandler.GetAHUByNumber)
+	apiV1.Post("/ahu/resolve", ahuHandler.ResolveEntity)
+	apiV1.Post("/ahu", jwtGuard, middleware.RequireRole("CORP_ADMIN", "CSR_MANAGER", "SUPERADMIN", "ORG_ADMIN"), ahuHandler.UpsertAHU)
+	apiV1.Post("/companies/:id/ahu", jwtGuard, ahuHandler.LinkCompanyAHU)
+
+	// OSS RBA NIB Business Universe Endpoints
+	apiV1.Get("/oss/search", ossHandler.Search)
+	apiV1.Get("/oss/:nib", ossHandler.GetByNIB)
+	apiV1.Post("/oss", jwtGuard, middleware.RequireRole("CORP_ADMIN", "CSR_MANAGER", "SUPERADMIN", "ORG_ADMIN"), ossHandler.UpsertNIB)
+	apiV1.Post("/companies/:id/nib", jwtGuard, ossHandler.LinkCompanyNIB)
 
 	apiV1.Get("/companies/:id", companyHandler.GetCompany)
 	apiV1.Put("/companies/:id", jwtGuard, middleware.RequireRole("CORP_ADMIN", "CSR_MANAGER", "SUPERADMIN", "ORG_ADMIN"), companyHandler.UpdateCompany)

@@ -33,6 +33,10 @@ type Company struct {
 	IsClaimed       bool      `json:"is_claimed"`
 	CorporateDomain *string   `json:"corporate_domain,omitempty"`
 	ClaimedByTenantID *string `json:"claimed_by_tenant_id,omitempty"`
+	AHUNumber       *string   `json:"ahu_number,omitempty"`
+	NIB             *string   `json:"nib,omitempty"`
+	KBLICode        *string   `json:"kbli_code,omitempty"`
+	LegalEntityType *string   `json:"legal_entity_type,omitempty"`
 	CreatedAt       time.Time `json:"created_at"`
 	UpdatedAt       time.Time `json:"updated_at"`
 }
@@ -43,4 +47,11 @@ type CompanyDetail struct {
 	TargetCount int                `json:"target_count"`
 	SignalCount int                `json:"signal_count"`
 	TotalBudget float64            `json:"total_budget_signal"`
+}
+
+type CorporateHierarchy struct {
+	Parent            *CompanyDetail  `json:"parent,omitempty"`
+	Company           CompanyDetail   `json:"company"`
+	Subsidiaries      []CompanyDetail `json:"subsidiaries"`
+	TotalSubsidiaries int             `json:"total_subsidiaries"`
 }

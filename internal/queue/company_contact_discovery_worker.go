@@ -22,6 +22,9 @@ var (
 	emailFinderRegex   = regexp.MustCompile(`(?i)[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}`)
 	phoneFinderRegex   = regexp.MustCompile(`(?:\+?62|0)8[1-9][0-9]{7,10}|(?:\+?62|0)[2-9][0-9]{1,3}[- ]?[0-9]{5,8}`)
 	addressFinderRegex = regexp.MustCompile(`(?i)(?:Alamat|Address|Kantor\s+Pusat|Head\s+Office|Gedung|Headquarters)\s*[:\-]\s*([^\r\n<]{15,200})|(?:Jl\.|Jalan)\s+[A-Za-z0-9\s.,\-\/]+(?:No\.\s*\d+|Kav\.\s*\d+)[^\r\n<]{5,100}`)
+	ahuFinderRegex     = regexp.MustCompile(`(?i)\bAHU[-.\s]?\d+[-.\s]?AH[-.\s]?\d+[-.\s]?\d+[-.\s]?(?:Tahun\s*\d{4}|\d{4})\b`)
+	nibFinderRegex     = regexp.MustCompile(`(?i)\bNIB\s*[:\.]?\s*(\d{13})\b`)
+	kbliFinderRegex    = regexp.MustCompile(`(?i)\bKBLI\s*[:\.]?\s*(\d{5})\b`)
 
 	ignoredEmailDomains = []string{
 		"example.com", "domain.com", "email.com", "sentry.io", "wixpress.com",
@@ -105,11 +108,11 @@ func (w *CompanyContactDiscoveryWorker) HandleCompanyContactDiscoveryBatch(ctx c
 	var enrichedCount int
 
 	for _, target := range targets {
-		var newPhone, newEmail, newHQ string
+		var newPhone, newEmail, newHQ, newAHU, newNIB, newKBLI string
 
 		// Tier 1: Inspect direct website contact pages if website is present
 		if target.Website != "" && target.Website != "https://-" {
-			p, e, hq := w.scrapeWebsiteContactPages(ctx, target.Website)
+			p, e, hq, ahu, nib, kbli := w.scrapeWebsiteContactPages(ctx, target.Website)
 			if p != "" && target.Phone == "" {
 				newPhone = p
 			}
@@ -119,6 +122,9 @@ func (w *CompanyContactDiscoveryWorker) HandleCompanyContactDiscoveryBatch(ctx c
 			if hq != "" && target.Headquarters == "" {
 				newHQ = hq
 			}
+			newAHU = ahu
+			newNIB = nib
+			newKBLI = kbli
 		}
 
 		// Tier 2: Serper API / Google Organic Search discovery fallback
@@ -133,10 +139,13 @@ func (w *CompanyContactDiscoveryWorker) HandleCompanyContactDiscoveryBatch(ctx c
 		}
 
 		// Tier 3: Validation & Database Persistence
-		if newPhone != "" || newEmail != "" || newHQ != "" {
+		if newPhone != "" || newEmail != "" || newHQ != "" || newAHU != "" || newNIB != "" || newKBLI != "" {
 			var validPhone *string
 			var validEmail *string
 			var validHQ *string
+			var validAHU *string
+			var validNIB *string
+			var validKBLI *string
 
 			if newPhone != "" {
 				ok, normalized, err := phoneverifier.DefaultVerifier.Verify(newPhone)
@@ -159,16 +168,29 @@ func (w *CompanyContactDiscoveryWorker) HandleCompanyContactDiscoveryBatch(ctx c
 				}
 			}
 
-			if validPhone != nil || validEmail != nil || validHQ != nil {
+			if newAHU != "" {
+				validAHU = &newAHU
+			}
+			if newNIB != "" {
+				validNIB = &newNIB
+			}
+			if newKBLI != "" {
+				validKBLI = &newKBLI
+			}
+
+			if validPhone != nil || validEmail != nil || validHQ != nil || validAHU != nil || validNIB != nil || validKBLI != nil {
 				updateQuery := `
 					UPDATE company.companies
 					SET phone = COALESCE($1, phone),
 					    email = COALESCE($2, email),
 					    headquarters = COALESCE($3, headquarters),
+					    ahu_number = COALESCE($4, ahu_number),
+					    nib = COALESCE($5, nib),
+					    kbli_code = COALESCE($6, kbli_code),
 					    updated_at = NOW()
-					WHERE id = $4;
+					WHERE id = $7;
 				`
-				_, updateErr := w.dbPool.Exec(ctx, updateQuery, validPhone, validEmail, validHQ, target.ID)
+				_, updateErr := w.dbPool.Exec(ctx, updateQuery, validPhone, validEmail, validHQ, validAHU, validNIB, validKBLI, target.ID)
 				if updateErr == nil {
 					enrichedCount++
 					pStr, eStr, hqStr := "<none>", "<none>", "<none>"
@@ -181,9 +203,9 @@ func (w *CompanyContactDiscoveryWorker) HandleCompanyContactDiscoveryBatch(ctx c
 					if validHQ != nil {
 						hqStr = *validHQ
 					}
-					log.Printf("[CompanyContactDiscoveryWorker] ✅ Enriched contact info for '%s' (ID: %s) -> Phone: %s | Email: %s | HQ: %s", target.Name, target.ID, pStr, eStr, hqStr)
+					log.Printf("[CompanyContactDiscoveryWorker] ✅ Enriched contact/legal info for '%s' (ID: %s) -> Phone: %s | Email: %s | HQ: %s | AHU: %v | NIB: %v | KBLI: %v", target.Name, target.ID, pStr, eStr, hqStr, validAHU, validNIB, validKBLI)
 				} else {
-					log.Printf("[CompanyContactDiscoveryWorker] Failed to update company contact info for '%s': %v", target.Name, updateErr)
+					log.Printf("[CompanyContactDiscoveryWorker] Failed to update company contact/legal info for '%s': %v", target.Name, updateErr)
 				}
 			}
 		}
@@ -193,14 +215,14 @@ func (w *CompanyContactDiscoveryWorker) HandleCompanyContactDiscoveryBatch(ctx c
 	return nil
 }
 
-func (w *CompanyContactDiscoveryWorker) scrapeWebsiteContactPages(ctx context.Context, baseWebsite string) (string, string, string) {
+func (w *CompanyContactDiscoveryWorker) scrapeWebsiteContactPages(ctx context.Context, baseWebsite string) (string, string, string, string, string, string) {
 	if !strings.HasPrefix(baseWebsite, "http://") && !strings.HasPrefix(baseWebsite, "https://") {
 		baseWebsite = "https://" + baseWebsite
 	}
 	baseWebsite = strings.TrimSuffix(baseWebsite, "/")
 
 	subPaths := []string{"", "/contact", "/kontak", "/about", "/tentang-kami"}
-	var foundPhone, foundEmail, foundHQ string
+	var foundPhone, foundEmail, foundHQ, foundAHU, foundNIB, foundKBLI string
 
 	for _, path := range subPaths {
 		targetURL := baseWebsite + path
@@ -251,12 +273,33 @@ func (w *CompanyContactDiscoveryWorker) scrapeWebsiteContactPages(ctx context.Co
 			foundHQ = extractAddressFromHTML(bodyText)
 		}
 
-		if foundPhone != "" && foundEmail != "" && foundHQ != "" {
+		if foundAHU == "" {
+			ahu := ahuFinderRegex.FindString(bodyText)
+			if ahu != "" {
+				foundAHU = strings.TrimSpace(ahu)
+			}
+		}
+
+		if foundNIB == "" {
+			nibMatch := nibFinderRegex.FindStringSubmatch(bodyText)
+			if len(nibMatch) > 1 {
+				foundNIB = strings.TrimSpace(nibMatch[1])
+			}
+		}
+
+		if foundKBLI == "" {
+			kbliMatch := kbliFinderRegex.FindStringSubmatch(bodyText)
+			if len(kbliMatch) > 1 {
+				foundKBLI = strings.TrimSpace(kbliMatch[1])
+			}
+		}
+
+		if foundPhone != "" && foundEmail != "" && foundHQ != "" && foundAHU != "" && foundNIB != "" {
 			break
 		}
 	}
 
-	return foundPhone, foundEmail, foundHQ
+	return foundPhone, foundEmail, foundHQ, foundAHU, foundNIB, foundKBLI
 }
 
 func extractAddressFromHTML(bodyText string) string {

@@ -161,17 +161,25 @@ func (h *WebhookHandler) HandleCrawlerWebhook(c *fiber.Ctx) error {
 			}
 		}
 
-		// 3. Dispatch automated Telegram alert for critical errors (429 Rate Limit, 404 Dead Link, 500 Server Error)
+		// 3. Dispatch automated Telegram alert following error-response.md taxonomy
 		if h.telegramNotifier != nil && h.telegramNotifier.IsEnabled() {
 			severity := "WARNING"
+			errorCode := fmt.Sprintf("SOURCE_HTTP_%d", httpStatusCode)
 			if httpStatusCode == 429 {
 				severity = "HIGH"
-			} else if httpStatusCode == 404 || httpStatusCode >= 500 {
-				severity = "CRITICAL"
+				errorCode = "SOURCE_RATE_LIMITED"
+			} else if httpStatusCode == 404 {
+				severity = "WARNING"
+				errorCode = "SOURCE_NOT_FOUND"
+			} else if httpStatusCode >= 500 {
+				severity = "WARNING"
+				errorCode = fmt.Sprintf("SOURCE_HTTP_%d", httpStatusCode)
 			}
 
-			alertTitle := fmt.Sprintf("Scraper Target Failure (HTTP %d)", httpStatusCode)
-			alertDetails := fmt.Sprintf("Task ID: <code>%s</code>\nSource Type: %s\nError Log: %s", payload.TaskID, payload.SourceType, errMsg)
+			alertTitle := fmt.Sprintf("Document Processing Failed (%s)", errorCode)
+			alertDetails := fmt.Sprintf("Task ID: <code>%s</code>\nSource Type: %s\nStage: DOWNLOAD / SCRAPE\nError Code: <code>%s</code>\nSource HTTP Status: %d\nRetryable: YES\nError Log: %s",
+				payload.TaskID, payload.SourceType, errorCode, httpStatusCode, errMsg)
+
 			go func() {
 				_ = h.telegramNotifier.SendAlert(context.Background(), alertTitle, severity, alertDetails, payload.SourceURL)
 			}()

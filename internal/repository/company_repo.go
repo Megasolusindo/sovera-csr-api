@@ -276,7 +276,8 @@ func (r *CompanyRepository) ListCompanies(ctx context.Context, limit, offset int
 			c.id::text, c.name, c.legal_name, c.slug, c.industry_id, c.industry_sector,
 			c.company_type, c.website, c.linkedin_url, c.linkedin_status, c.instagram_url, c.instagram_status, c.facebook_url, c.facebook_status, c.youtube_url, c.youtube_status, c.headquarters,
 			c.employee_range, c.revenue_range, c.is_public, c.ticker,
-			c.parent_company_id::text, COALESCE(c.priority_tier, 'TIER_3'), COALESCE(c.csr_category, 'POTENSIAL'), COALESCE(c.partner_ngo, (SELECT p.csr_department_name FROM company_csr_profiles p WHERE p.company_id = c.id LIMIT 1)), COALESCE(c.alias_keywords, '{}'), c.created_at, c.updated_at,
+			c.parent_company_id::text, COALESCE(c.priority_tier, 'TIER_3'), COALESCE(c.csr_category, 'POTENSIAL'), COALESCE(c.partner_ngo, (SELECT p.csr_department_name FROM company_csr_profiles p WHERE p.company_id = c.id LIMIT 1)), COALESCE(c.alias_keywords, '{}'),
+			c.ahu_number, c.nib, c.kbli_code, c.legal_entity_type, c.created_at, c.updated_at,
 			(SELECT COUNT(*) FROM crawling_targets t WHERE t.company_id = c.id) AS target_count,
 			(SELECT COUNT(*) FROM intelligence.company_signals s WHERE s.company_id = c.id OR s.company_name ILIKE c.name) AS signal_count,
 			COALESCE((SELECT SUM(s.estimated_budget_signal) FROM intelligence.company_signals s WHERE s.company_id = c.id OR s.company_name ILIKE c.name), 0) AS total_budget
@@ -300,7 +301,8 @@ func (r *CompanyRepository) ListCompanies(ctx context.Context, limit, offset int
 			&cd.ID, &cd.Name, &cd.LegalName, &cd.Slug, &cd.IndustryID, &cd.IndustrySector,
 			&cd.CompanyType, &cd.Website, &cd.LinkedinURL, &cd.LinkedinStatus, &cd.InstagramURL, &cd.InstagramStatus, &cd.FacebookURL, &cd.FacebookStatus, &cd.YoutubeURL, &cd.YoutubeStatus, &cd.Headquarters,
 			&cd.EmployeeRange, &cd.RevenueRange, &cd.IsPublic, &cd.Ticker,
-			&cd.ParentCompanyID, &cd.PriorityTier, &cd.CSRCategory, &cd.PartnerNGO, &cd.AliasKeywords, &cd.CreatedAt, &cd.UpdatedAt,
+			&cd.ParentCompanyID, &cd.PriorityTier, &cd.CSRCategory, &cd.PartnerNGO, &cd.AliasKeywords,
+			&cd.AHUNumber, &cd.NIB, &cd.KBLICode, &cd.LegalEntityType, &cd.CreatedAt, &cd.UpdatedAt,
 			&cd.TargetCount, &cd.SignalCount, &cd.TotalBudget,
 		)
 		if err != nil {
@@ -323,7 +325,8 @@ func (r *CompanyRepository) GetCompanyByID(ctx context.Context, idOrSlug string)
 			c.id::text, c.name, c.legal_name, c.slug, c.industry_id, c.industry_sector,
 			c.company_type, c.website, c.linkedin_url, c.linkedin_status, c.instagram_url, c.instagram_status, c.facebook_url, c.facebook_status, c.youtube_url, c.youtube_status, c.headquarters,
 			c.employee_range, c.revenue_range, c.is_public, c.ticker,
-			c.parent_company_id::text, COALESCE(c.priority_tier, 'TIER_3'), COALESCE(c.csr_category, 'POTENSIAL'), COALESCE(c.partner_ngo, (SELECT p.csr_department_name FROM company_csr_profiles p WHERE p.company_id = c.id LIMIT 1)), COALESCE(c.alias_keywords, '{}'), c.created_at, c.updated_at,
+			c.parent_company_id::text, COALESCE(c.priority_tier, 'TIER_3'), COALESCE(c.csr_category, 'POTENSIAL'), COALESCE(c.partner_ngo, (SELECT p.csr_department_name FROM company_csr_profiles p WHERE p.company_id = c.id LIMIT 1)), COALESCE(c.alias_keywords, '{}'),
+			c.ahu_number, c.nib, c.kbli_code, c.legal_entity_type, c.created_at, c.updated_at,
 			(SELECT COUNT(*) FROM crawling_targets t WHERE t.company_id = c.id) AS target_count,
 			(SELECT COUNT(*) FROM intelligence.company_signals s WHERE s.company_id = c.id OR s.company_name ILIKE c.name) AS signal_count,
 			COALESCE((SELECT SUM(s.estimated_budget_signal) FROM intelligence.company_signals s WHERE s.company_id = c.id OR s.company_name ILIKE c.name), 0) AS total_budget
@@ -337,7 +340,8 @@ func (r *CompanyRepository) GetCompanyByID(ctx context.Context, idOrSlug string)
 		&cd.ID, &cd.Name, &cd.LegalName, &cd.Slug, &cd.IndustryID, &cd.IndustrySector,
 		&cd.CompanyType, &cd.Website, &cd.LinkedinURL, &cd.LinkedinStatus, &cd.InstagramURL, &cd.InstagramStatus, &cd.FacebookURL, &cd.FacebookStatus, &cd.YoutubeURL, &cd.YoutubeStatus, &cd.Headquarters,
 		&cd.EmployeeRange, &cd.RevenueRange, &cd.IsPublic, &cd.Ticker,
-		&cd.ParentCompanyID, &cd.PriorityTier, &cd.CSRCategory, &cd.PartnerNGO, &cd.AliasKeywords, &cd.CreatedAt, &cd.UpdatedAt,
+		&cd.ParentCompanyID, &cd.PriorityTier, &cd.CSRCategory, &cd.PartnerNGO, &cd.AliasKeywords,
+		&cd.AHUNumber, &cd.NIB, &cd.KBLICode, &cd.LegalEntityType, &cd.CreatedAt, &cd.UpdatedAt,
 		&cd.TargetCount, &cd.SignalCount, &cd.TotalBudget,
 	)
 	if err != nil {
@@ -576,6 +580,180 @@ func (r *CompanyRepository) UpdateCompanyWebsite(ctx context.Context, companyID 
 
 	return tx.Commit(ctx)
 }
+
+// UpdateCompanyLegalDetails updates the AHU number, NIB, KBLI code, and legal entity type for a company.
+func (r *CompanyRepository) UpdateCompanyLegalDetails(ctx context.Context, companyID string, ahuNumber, nib, kbliCode, legalEntityType string) error {
+	if r.pool == nil {
+		return fmt.Errorf("database pool is nil")
+	}
+
+	query := `
+		UPDATE company.companies SET
+			ahu_number = COALESCE(NULLIF($1, ''), ahu_number),
+			nib = COALESCE(NULLIF($2, ''), nib),
+			kbli_code = COALESCE(NULLIF($3, ''), kbli_code),
+			legal_entity_type = COALESCE(NULLIF($4, ''), legal_entity_type),
+			updated_at = NOW()
+		WHERE id = $5::uuid;
+	`
+
+	_, err := r.pool.Exec(ctx, query, ahuNumber, nib, kbliCode, legalEntityType, companyID)
+	if err != nil {
+		return fmt.Errorf("failed to update company legal details: %w", err)
+	}
+
+	return nil
+}
+
+// GetCompanySubsidiaries retrieves all direct subsidiaries for a parent company.
+func (r *CompanyRepository) GetCompanySubsidiaries(ctx context.Context, parentID string) ([]model.CompanyDetail, error) {
+	if r.pool == nil {
+		return nil, fmt.Errorf("database pool is nil")
+	}
+
+	query := `
+		SELECT 
+			c.id::text, c.name, c.legal_name, c.slug, c.industry_id, c.industry_sector,
+			c.company_type, c.website, c.linkedin_url, c.linkedin_status, c.instagram_url, c.instagram_status, c.facebook_url, c.facebook_status, c.youtube_url, c.youtube_status, c.headquarters,
+			c.employee_range, c.revenue_range, c.is_public, c.ticker,
+			c.parent_company_id::text, COALESCE(c.priority_tier, 'TIER_3'), COALESCE(c.csr_category, 'POTENSIAL'), COALESCE(c.partner_ngo, (SELECT p.csr_department_name FROM company_csr_profiles p WHERE p.company_id = c.id LIMIT 1)), COALESCE(c.alias_keywords, '{}'),
+			c.ahu_number, c.nib, c.kbli_code, c.legal_entity_type, c.created_at, c.updated_at,
+			(SELECT COUNT(*) FROM crawling_targets t WHERE t.company_id = c.id) AS target_count,
+			(SELECT COUNT(*) FROM intelligence.company_signals s WHERE s.company_id = c.id OR s.company_name ILIKE c.name) AS signal_count,
+			COALESCE((SELECT SUM(s.estimated_budget_signal) FROM intelligence.company_signals s WHERE s.company_id = c.id OR s.company_name ILIKE c.name), 0) AS total_budget
+		FROM company.companies c
+		WHERE c.parent_company_id::text = $1
+		ORDER BY c.priority_tier ASC, c.name ASC;
+	`
+
+	rows, err := r.pool.Query(ctx, query, parentID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query subsidiaries: %w", err)
+	}
+	defer rows.Close()
+
+	subsidiaries := []model.CompanyDetail{}
+	for rows.Next() {
+		var cd model.CompanyDetail
+		err := rows.Scan(
+			&cd.ID, &cd.Name, &cd.LegalName, &cd.Slug, &cd.IndustryID, &cd.IndustrySector,
+			&cd.CompanyType, &cd.Website, &cd.LinkedinURL, &cd.LinkedinStatus, &cd.InstagramURL, &cd.InstagramStatus, &cd.FacebookURL, &cd.FacebookStatus, &cd.YoutubeURL, &cd.YoutubeStatus, &cd.Headquarters,
+			&cd.EmployeeRange, &cd.RevenueRange, &cd.IsPublic, &cd.Ticker,
+			&cd.ParentCompanyID, &cd.PriorityTier, &cd.CSRCategory, &cd.PartnerNGO, &cd.AliasKeywords,
+			&cd.AHUNumber, &cd.NIB, &cd.KBLICode, &cd.LegalEntityType, &cd.CreatedAt, &cd.UpdatedAt,
+			&cd.TargetCount, &cd.SignalCount, &cd.TotalBudget,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan subsidiary row: %w", err)
+		}
+		subsidiaries = append(subsidiaries, cd)
+	}
+
+	return subsidiaries, nil
+}
+
+// GetCompanyHierarchy retrieves the full corporate graph tree (Parent, Company, and Subsidiaries).
+func (r *CompanyRepository) GetCompanyHierarchy(ctx context.Context, idOrSlug string) (*model.CorporateHierarchy, error) {
+	comp, err := r.GetCompanyByID(ctx, idOrSlug)
+	if err != nil {
+		return nil, err
+	}
+
+	var parent *model.CompanyDetail
+	if comp.ParentCompanyID != nil && *comp.ParentCompanyID != "" {
+		p, pErr := r.GetCompanyByID(ctx, *comp.ParentCompanyID)
+		if pErr == nil {
+			parent = p
+		}
+	}
+
+	subsidiaries, sErr := r.GetCompanySubsidiaries(ctx, comp.ID)
+	if sErr != nil {
+		subsidiaries = []model.CompanyDetail{}
+	}
+
+	return &model.CorporateHierarchy{
+		Parent:            parent,
+		Company:           *comp,
+		Subsidiaries:      subsidiaries,
+		TotalSubsidiaries: len(subsidiaries),
+	}, nil
+}
+
+// LinkParentSubsidiary manually links a subsidiary company to a parent holding company.
+func (r *CompanyRepository) LinkParentSubsidiary(ctx context.Context, parentID, subsidiaryID string) error {
+	if r.pool == nil {
+		return fmt.Errorf("database pool is nil")
+	}
+
+	res, err := r.pool.Exec(ctx, `
+		UPDATE company.companies 
+		SET parent_company_id = $1::uuid, updated_at = NOW() 
+		WHERE id::text = $2;
+	`, parentID, subsidiaryID)
+	if err != nil {
+		return fmt.Errorf("failed to link parent subsidiary: %w", err)
+	}
+
+	if res.RowsAffected() == 0 {
+		return fmt.Errorf("subsidiary company with ID %s not found", subsidiaryID)
+	}
+
+	return nil
+}
+
+// AutoLinkCorporateGroups runs empirical SQL group matching to populate parent_company_id for major Indonesian corporate groups.
+func (r *CompanyRepository) AutoLinkCorporateGroups(ctx context.Context) (int, error) {
+	if r.pool == nil {
+		return 0, fmt.Errorf("database pool is nil")
+	}
+
+	queries := []string{
+		// 1. Astra Group (ASII)
+		`UPDATE company.companies SET parent_company_id = (SELECT id FROM company.companies WHERE slug = 'pt-astra-international-tbk-asii' OR ticker = 'ASII' LIMIT 1), updated_at = NOW()
+		 WHERE parent_company_id IS NULL AND id <> (SELECT id FROM company.companies WHERE slug = 'pt-astra-international-tbk-asii' OR ticker = 'ASII' LIMIT 1)
+		   AND (name ILIKE 'PT Astra %' OR name ILIKE 'PT Toyota-Astra %' OR name ILIKE 'PT Astra-%');`,
+
+		// 2. Pertamina Group
+		`UPDATE company.companies SET parent_company_id = (SELECT id FROM company.companies WHERE (slug ILIKE '%pertamina-persero%' OR name ILIKE '%pertamina (persero)%') AND (company_type = 'BUMN' OR is_public = true) ORDER BY is_public DESC LIMIT 1), updated_at = NOW()
+		 WHERE parent_company_id IS NULL AND name ILIKE 'PT Pertamina %' AND slug NOT ILIKE '%pertamina-persero%';`,
+
+		// 3. PLN Group
+		`UPDATE company.companies SET parent_company_id = (SELECT id FROM company.companies WHERE (slug ILIKE '%pln%' OR name ILIKE '%perusahaan listrik negara%') AND parent_company_id IS NULL ORDER BY is_public DESC LIMIT 1), updated_at = NOW()
+		 WHERE parent_company_id IS NULL AND name ILIKE 'PT PLN %' AND id <> (SELECT id FROM company.companies WHERE (slug ILIKE '%pln%' OR name ILIKE '%perusahaan listrik negara%') AND parent_company_id IS NULL ORDER BY is_public DESC LIMIT 1);`,
+
+		// 4. Telkom Group (TLKM)
+		`UPDATE company.companies SET parent_company_id = (SELECT id FROM company.companies WHERE ticker = 'TLKM' OR slug = 'pt-telkom-indonesia-persero-tbk-tlkm' LIMIT 1), updated_at = NOW()
+		 WHERE parent_company_id IS NULL AND (name ILIKE '%telkomsel%' OR name ILIKE 'PT Telkom %') AND id <> (SELECT id FROM company.companies WHERE ticker = 'TLKM' LIMIT 1);`,
+
+		// 5. Bank Mandiri Group (BMRI)
+		`UPDATE company.companies SET parent_company_id = (SELECT id FROM company.companies WHERE ticker = 'BMRI' OR name ILIKE '%bank mandiri%persero%tbk%' LIMIT 1), updated_at = NOW()
+		 WHERE parent_company_id IS NULL AND (name ILIKE 'PT Bank Mandiri %' OR name ILIKE 'PT Mandiri Sekuritas%' OR name ILIKE 'PT Mandiri Utama Finance%') AND id <> (SELECT id FROM company.companies WHERE ticker = 'BMRI' LIMIT 1);`,
+
+		// 6. BRI Group (BBRI)
+		`UPDATE company.companies SET parent_company_id = (SELECT id FROM company.companies WHERE ticker = 'BBRI' OR name ILIKE '%bank rakyat indonesia%persero%tbk%' LIMIT 1), updated_at = NOW()
+		 WHERE parent_company_id IS NULL AND (name ILIKE 'PT Bank BRI %' OR name ILIKE 'PT BRI Agro%' OR name ILIKE 'PT BRI Finance%' OR name ILIKE 'PT Pegadaian%' OR name ILIKE 'PT Permodalan Nasional Madani%') AND id <> (SELECT id FROM company.companies WHERE ticker = 'BBRI' LIMIT 1);`,
+
+		// 7. Pupuk Indonesia Group
+		`UPDATE company.companies SET parent_company_id = (SELECT id FROM company.companies WHERE name ILIKE 'PT Pupuk Indonesia%' LIMIT 1), updated_at = NOW()
+		 WHERE parent_company_id IS NULL AND (name ILIKE 'PT Pupuk Kaltim%' OR name ILIKE 'PT Pupuk Kujang%' OR name ILIKE 'PT Pupuk Sriwidjaja%' OR name ILIKE 'PT Petrokimia Gresik%' OR name ILIKE 'PT Pupuk Iskandar Muda%') AND id <> (SELECT id FROM company.companies WHERE name ILIKE 'PT Pupuk Indonesia%' LIMIT 1);`,
+
+		// 8. MIND ID / Mining Industry Group
+		`UPDATE company.companies SET parent_company_id = (SELECT id FROM company.companies WHERE name ILIKE '%MIND ID%' OR name ILIKE '%Inalum%' LIMIT 1), updated_at = NOW()
+		 WHERE parent_company_id IS NULL AND (ticker IN ('ANTM', 'PTBA', 'TINS') OR name ILIKE 'PT Freeport Indonesia%') AND id <> (SELECT id FROM company.companies WHERE name ILIKE '%MIND ID%' LIMIT 1);`,
+	}
+
+	var totalLinked int
+	for _, q := range queries {
+		res, err := r.pool.Exec(ctx, q)
+		if err == nil {
+			totalLinked += int(res.RowsAffected())
+		}
+	}
+
+	return totalLinked, nil
+}
+
 
 
 

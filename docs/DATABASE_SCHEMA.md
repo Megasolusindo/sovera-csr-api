@@ -84,6 +84,8 @@ CREATE TABLE IF NOT EXISTS companies (
     industry_sector VARCHAR(100) NOT NULL,
     company_type VARCHAR(50) DEFAULT 'SWASTA',
     website TEXT,
+    phone VARCHAR(50),
+    email VARCHAR(255),
     linkedin_url TEXT,
     headquarters VARCHAR(255),
     employee_range VARCHAR(50),
@@ -92,6 +94,63 @@ CREATE TABLE IF NOT EXISTS companies (
     ticker VARCHAR(20),
     parent_company_id UUID REFERENCES companies(id) ON DELETE SET NULL,
     alias_keywords TEXT[] DEFAULT '{}',
+    ahu_number VARCHAR(100),
+    nib VARCHAR(30),
+    kbli_code VARCHAR(10),
+    legal_entity_type VARCHAR(50) DEFAULT 'PT',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Dataset Referensi KBLI 2020 BPS/OSS (Migrasi 000042)
+CREATE TABLE IF NOT EXISTS kbli_reference (
+    code VARCHAR(10) PRIMARY KEY,
+    title VARCHAR(255) NOT NULL,
+    category_code CHAR(1) NOT NULL,
+    category_title VARCHAR(255) NOT NULL,
+    csr_relevance_default VARCHAR(50) DEFAULT 'MEDIUM',
+    risk_level VARCHAR(50) DEFAULT 'MENENGAH',
+    description TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Ditjen AHU Kemenkumham Corporate Registry & Entity Resolution (Migrasi 000043)
+CREATE TABLE IF NOT EXISTS ahu_registrations (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    company_id UUID REFERENCES companies(id) ON DELETE SET NULL,
+    company_name VARCHAR(255) NOT NULL,
+    legal_name VARCHAR(255) NOT NULL,
+    ahu_number VARCHAR(100) UNIQUE NOT NULL,
+    legal_entity_type VARCHAR(50) NOT NULL DEFAULT 'PT',
+    deed_number VARCHAR(100),
+    deed_date DATE,
+    notary_name VARCHAR(255),
+    status VARCHAR(50) DEFAULT 'AKTIF',
+    headquarters VARCHAR(255),
+    capital_amount NUMERIC(18,2),
+    verified_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- OSS RBA BKPM NIB Business Universe (Migrasi 000044)
+CREATE TABLE IF NOT EXISTS oss_nib_registrations (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    company_id UUID REFERENCES companies(id) ON DELETE SET NULL,
+    nib VARCHAR(30) UNIQUE NOT NULL,
+    business_name VARCHAR(255) NOT NULL,
+    legal_entity_type VARCHAR(50) DEFAULT 'PT',
+    kbli_code VARCHAR(10) REFERENCES kbli_reference(code) ON DELETE SET NULL,
+    risk_level VARCHAR(50) DEFAULT 'MENENGAH',
+    investment_status VARCHAR(50) DEFAULT 'PMDN',
+    province VARCHAR(100),
+    regency_city VARCHAR(100),
+    district VARCHAR(100),
+    address TEXT,
+    license_status VARCHAR(50) DEFAULT 'TERBIT',
+    issued_date DATE,
+    verified_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );

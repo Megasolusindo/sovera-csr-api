@@ -762,5 +762,106 @@ func (h *CompanyHandler) TriggerBatchYoutubeVerification(c *fiber.Ctx) error {
 	})
 }
 
+// GetCompanyHierarchy returns the corporate graph tree (Parent, Company, Subsidiaries).
+func (h *CompanyHandler) GetCompanyHierarchy(c *fiber.Ctx) error {
+	idOrSlug := c.Params("id")
+	if idOrSlug == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"success": false,
+			"error":   "INVALID_INPUT",
+			"message": "Company ID or Slug is required",
+		})
+	}
+
+	hierarchy, err := h.repo.GetCompanyHierarchy(c.Context(), idOrSlug)
+	if err != nil {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+			"success": false,
+			"error":   "COMPANY_NOT_FOUND",
+			"message": err.Error(),
+		})
+	}
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{
+		"success": true,
+		"data":    hierarchy,
+	})
+}
+
+// GetCompanySubsidiaries returns direct subsidiaries for a company.
+func (h *CompanyHandler) GetCompanySubsidiaries(c *fiber.Ctx) error {
+	parentID := c.Params("id")
+	if parentID == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"success": false,
+			"error":   "INVALID_INPUT",
+			"message": "Parent company ID is required",
+		})
+	}
+
+	subsidiaries, err := h.repo.GetCompanySubsidiaries(c.Context(), parentID)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"success": false,
+			"error":   "QUERY_FAILED",
+			"message": err.Error(),
+		})
+	}
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{
+		"success": true,
+		"data":    subsidiaries,
+		"total":   len(subsidiaries),
+	})
+}
+
+// LinkParentSubsidiary handles POST /api/v1/companies/link-parent
+func (h *CompanyHandler) LinkParentSubsidiary(c *fiber.Ctx) error {
+	var body struct {
+		ParentID     string `json:"parent_id"`
+		SubsidiaryID string `json:"subsidiary_id"`
+	}
+
+	if err := c.BodyParser(&body); err != nil || body.ParentID == "" || body.SubsidiaryID == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"success": false,
+			"error":   "INVALID_INPUT",
+			"message": "Both parent_id and subsidiary_id are required",
+		})
+	}
+
+	if err := h.repo.LinkParentSubsidiary(c.Context(), body.ParentID, body.SubsidiaryID); err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"success": false,
+			"error":   "LINK_FAILED",
+			"message": err.Error(),
+		})
+	}
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{
+		"success": true,
+		"message": "Successfully linked parent and subsidiary companies",
+	})
+}
+
+// AutoLinkCorporateGroups handles POST /api/v1/companies/auto-link-groups
+func (h *CompanyHandler) AutoLinkCorporateGroups(c *fiber.Ctx) error {
+	totalLinked, err := h.repo.AutoLinkCorporateGroups(c.Context())
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"success": false,
+			"error":   "AUTO_LINK_FAILED",
+			"message": err.Error(),
+		})
+	}
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{
+		"success":      true,
+		"message":      "Successfully auto-linked corporate group holdings and subsidiaries",
+		"total_linked": totalLinked,
+	})
+}
+
+
 
 
