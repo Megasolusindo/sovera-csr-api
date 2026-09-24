@@ -83,11 +83,7 @@ func main() {
 	textNormalizer := normalizer.NewNormalizer()
 	storageService := storage.NewStorageService()
 	telegramNotifier := telegram.NewNotifier(cfg.TelegramBotToken, cfg.TelegramChatID)
-	serperMonitor := serper.InitDefaultMonitor(cfg.SerperAPIKey, telegramNotifier)
-	go func() {
-		time.Sleep(2 * time.Second)
-		_, _ = serperMonitor.CheckAndNotify(context.Background())
-	}()
+	_ = serper.InitDefaultMonitor(cfg.SerperAPIKey, telegramNotifier)
 
 	signalRepo := repository.NewSignalRepository(dbPool)
 	programRepo := repository.NewProgramRepository(dbPool)

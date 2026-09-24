@@ -122,43 +122,11 @@ func (m *SerperMonitor) CheckAndNotify(ctx context.Context) (int, error) {
 	}
 
 	if balance <= 0 {
-		if m.lastAlert != "EXHAUSTED" {
-			m.lastAlert = "EXHAUSTED"
-			if m.notifier != nil && m.notifier.IsEnabled() {
-				msg := fmt.Sprintf(
-					"🚨 <b>SOVERA SERPER API CRITICAL ALERT</b>\n\n"+
-						"<b>Status:</b> KUOTA HABIS (0 CREDITS)\n"+
-						"<b>Sisa Kuota:</b> <code>0</code> pencarian\n"+
-						"<b>API Key:</b> <code>%s</code>\n"+
-						"<b>Waktu:</b> %s UTC\n\n"+
-						"⚠️ <b>Dampak:</b> Worker pencarian otomatis LinkedIn, Instagram & Kontak Perusahaan terhenti sementara.\n\n"+
-						"💡 <b>Tindakan Segera:</b> Beli/top-up kredit di https://serper.dev/billing lalu perbarui <code>SERPER_API_KEY</code> di <code>.env</code>.",
-					maskedKey,
-					time.Now().UTC().Format("2006-01-02 15:04:05"),
-				)
-				_ = m.notifier.SendNotification(ctx, msg)
-			}
-			log.Printf("[SerperMonitor] CRITICAL: Serper API credits exhausted (0 balance). Alert sent!")
-		}
+		m.lastAlert = "EXHAUSTED"
+		log.Printf("[SerperMonitor] Notice: Serper API balance is 0. Search queries automatically fall back to FreeRSSProvider in web-scraper engine.")
 	} else if balance < 1000 {
-		if m.lastAlert != "LOW" {
-			m.lastAlert = "LOW"
-			if m.notifier != nil && m.notifier.IsEnabled() {
-				msg := fmt.Sprintf(
-					"⚠️ <b>SOVERA SERPER API WARNING</b>\n\n"+
-						"<b>Status:</b> KUOTA MENIPIS (&lt; 1000 CREDITS)\n"+
-						"<b>Sisa Kuota:</b> <code>%d</code> pencarian\n"+
-						"<b>API Key:</b> <code>%s</code>\n"+
-						"<b>Waktu:</b> %s UTC\n\n"+
-						"💡 <b>Rekomendasi:</b> Lakukan top-up kuota di https://serper.dev/billing agar worker pencarian otomatis tetap berjalan tanpa kendala.",
-					balance,
-					maskedKey,
-					time.Now().UTC().Format("2006-01-02 15:04:05"),
-				)
-				_ = m.notifier.SendNotification(ctx, msg)
-			}
-			log.Printf("[SerperMonitor] WARNING: Serper API credits low (%d balance < 1000). Alert sent!", balance)
-		}
+		m.lastAlert = "LOW"
+		log.Printf("[SerperMonitor] Notice: Serper API balance is low (%d credits).", balance)
 	} else {
 		// Reset alert state if balance topped up back to >= 1000
 		m.lastAlert = "OK"
