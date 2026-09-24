@@ -14,3 +14,9 @@
 - **EMPIRICAL & VERIFIED URL SOURCES ONLY**: All target URLs must be obtained directly from live, authoritative sources (e.g., official website URLs verified via HTTP 2xx/3xx, or Google News / Serper API RSS search queries).
 - **CRITICAL REJECTION**: Any handle guessing or sub-path concatenation (such as appending `/csr` to arbitrary domain names) is strictly forbidden.
 
+## MANDATORY DATABASE SCHEMA & TABLE INSPECTION DIRECTIVE
+- **ZERO TABLE & SCHEMA GUESSING**: Under no circumstances should SQL queries, migrations, or investigation scripts be executed against the database based on assumed or generic table names (e.g. `contacts`, `csr_activities`) or column names (e.g. `published_at`, `title`).
+- **INSPECT TABLES & SCHEMA FIRST**: ALWAYS run `\dt *.*` / `\d <table_name>` or inspect model repository files BEFORE executing any exploratory or aggregation SQL queries to verify exact schema namespaces, table names, column names, types, and constraints.
+
+
+

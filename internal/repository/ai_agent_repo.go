@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -177,7 +179,220 @@ func (r *AIAgentRepository) SubmitFinding(ctx context.Context, finding model.AIR
 		_ = json.Unmarshal(evidenceBytes, &result.EvidenceData)
 	}
 
+	// Auto-mirror finding to intelligence.company_signals for live /signals dashboard display
+	r.mirrorFindingToSignal(ctx, result)
+
 	return &result, nil
+}
+
+// ParseEstimatedBudgetFromText extracts monetary values (in IDR) from raw text (e.g. "Rp 15 Miliar", "25 Milyar", "500 Juta", "Rp 15.000.000.000")
+func ParseEstimatedBudgetFromText(text string) float64 {
+	cleanText := strings.TrimSpace(text)
+	if cleanText == "" {
+		return 0
+	}
+
+	// Pattern 1: Multiplier words ("15 Miliar", "Rp 25 Milyar", "500 Juta", "Rp 2,5 M", "USD 10 Million")
+	reMultiplier := regexp.MustCompile(`(?i)(?:rp\.?|\$|usd)?\s*([\d]+(?:[\.,][\d]+)?)\s*(triliun|trillion|miliar|milyar|billion|juta|jt|million|m|t|b)\b`)
+	matches := reMultiplier.FindAllStringSubmatch(cleanText, -1)
+	for _, m := range matches {
+		if len(m) >= 3 {
+			rawNumStr := strings.ReplaceAll(m[1], ",", ".")
+			num, err := strconv.ParseFloat(rawNumStr, 64)
+			if err == nil && num > 0 {
+				unitStr := strings.ToLower(m[2])
+				multiplier := 1.0
+				switch unitStr {
+				case "triliun", "trillion", "t":
+					multiplier = 1e12
+				case "miliar", "milyar", "billion", "m":
+					multiplier = 1e9
+				case "juta", "jt", "million":
+					multiplier = 1e6
+				}
+				result := num * multiplier
+				if result >= 100000 && result <= 1e14 {
+					return result
+				}
+			}
+		}
+	}
+
+	// Pattern 2: Explicit formatted full numbers e.g. "Rp 15.000.000.000" or "Rp 15,000,000,000"
+	reFullDigits := regexp.MustCompile(`(?i)(?:rp\.?|\$|usd)\s*([\d\.\,]{7,})`)
+	digitsMatches := reFullDigits.FindAllStringSubmatch(cleanText, -1)
+	for _, m := range digitsMatches {
+		if len(m) >= 2 {
+			rawNumStr := m[1]
+			cleanDigits := strings.ReplaceAll(rawNumStr, ".", "")
+			cleanDigits = strings.ReplaceAll(cleanDigits, ",", "")
+			num, err := strconv.ParseFloat(cleanDigits, 64)
+			if err == nil && num >= 100000 && num <= 1e14 {
+				return num
+			}
+		}
+	}
+
+	return 0
+}
+
+// mirrorFindingToSignal mirrors an AI research finding into intelligence.company_signals with string truncation safeguards and budget extraction
+func (r *AIAgentRepository) mirrorFindingToSignal(ctx context.Context, f model.AIResearchFinding) {
+	if r.dbPool == nil {
+		return
+	}
+
+	companyID := f.CompanyID
+	cleanCompName := strings.TrimSpace(f.CompanyName)
+	if cleanCompName == "" || cleanCompName == "Unknown" {
+		cleanCompName = "Perusahaan Indonesia"
+	}
+
+	if companyID == nil && cleanCompName != "" && cleanCompName != "Perusahaan Indonesia" {
+		var resolvedID uuid.UUID
+		cleanKeyword := strings.TrimSpace(strings.ReplaceAll(strings.ReplaceAll(strings.ToLower(cleanCompName), "pt ", ""), "tbk", ""))
+		err := r.dbPool.QueryRow(ctx, `
+			SELECT id FROM company.companies 
+			WHERE LOWER(TRIM(name)) = LOWER(TRIM($1)) 
+			   OR name ILIKE $2 
+			   OR slug = $3 
+			LIMIT 1
+		`, cleanCompName, "%"+cleanKeyword+"%", cleanKeyword).Scan(&resolvedID)
+		if err == nil {
+			companyID = &resolvedID
+		}
+	}
+
+	sourceType := f.SourceType
+	if sourceType == "" {
+		sourceType = "OPENCLAW_AI"
+	}
+	if len(sourceType) > 50 {
+		sourceType = sourceType[:50]
+	}
+
+	summary := strings.TrimSpace(f.Summary)
+	if summary == "" {
+		summary = strings.TrimSpace(f.Title)
+	}
+
+	pillar := strings.TrimSpace(f.FindingType)
+	if pillar == "" {
+		pillar = "Pendidikan & Keberlanjutan"
+	}
+	if len(pillar) > 100 {
+		pillar = pillar[:100]
+	}
+
+	activityFocus := strings.TrimSpace(f.Title)
+	if activityFocus == "" {
+		activityFocus = "Inisiatif Program CSR"
+	}
+	if len(activityFocus) > 100 {
+		activityFocus = activityFocus[:100]
+	}
+
+	intentScore := int(f.ConfidenceScore * 100)
+	if intentScore < 50 {
+		intentScore = 85
+	}
+
+	rawHashInput := f.SourceURL + "_" + f.Title
+	if strings.TrimSpace(rawHashInput) == "_" {
+		rawHashInput = f.IdempotencyKey
+	}
+	hashBytes := sha256.Sum256([]byte(rawHashInput))
+	contentHash := hex.EncodeToString(hashBytes[:16])
+
+	pubDate := time.Now()
+	if f.PublishedAt != nil && !f.PublishedAt.IsZero() {
+		pubDate = *f.PublishedAt
+	}
+
+	compNameTrunc := cleanCompName
+	if len(compNameTrunc) > 255 {
+		compNameTrunc = compNameTrunc[:255]
+	}
+
+	industrySector := strings.TrimSpace(f.SourceName)
+	if industrySector == "" {
+		industrySector = "Sosial & Lingkungan"
+	}
+	if len(industrySector) > 255 {
+		industrySector = industrySector[:255]
+	}
+
+	estimatedBudget := 0.0
+	if evBudget, ok := f.EvidenceData["estimated_budget"].(float64); ok && evBudget > 0 {
+		estimatedBudget = evBudget
+	} else if evBudgetSignal, ok := f.EvidenceData["estimated_budget_signal"].(float64); ok && evBudgetSignal > 0 {
+		estimatedBudget = evBudgetSignal
+	} else {
+		estimatedBudget = ParseEstimatedBudgetFromText(summary + " " + f.Title)
+	}
+
+	query := `
+		WITH val AS (
+			SELECT 
+				$1::uuid AS company_id, 
+				$2::varchar(255) AS company_name, 
+				$3::varchar(255) AS industry_sector, 
+				$4::varchar(50) AS source_type, 
+				$5::text AS source_url, 
+				$6::text AS summary, 
+				$7::varchar(100) AS extracted_pillar, 
+				$8::text AS trigger_event, 
+				$9::integer AS intent_score, 
+				$10::varchar(100) AS content_hash, 
+				$11::varchar(100) AS activity_focus, 
+				$12::date AS published_date,
+				$13::numeric(18,2) AS estimated_budget_signal
+		)
+		INSERT INTO intelligence.company_signals (
+			company_id, company_name, industry_sector, source_type, source_url, 
+			summary, extracted_pillar, target_regions, estimated_budget_signal, 
+			trigger_event, intent_score, content_hash, csr_relevance, activity_focus, 
+			action_type, opportunity_alert, published_date, created_at
+		) 
+		SELECT 
+			val.company_id, val.company_name, val.industry_sector, val.source_type, val.source_url,
+			val.summary, val.extracted_pillar, ARRAY['Nasional'], val.estimated_budget_signal,
+			val.trigger_event, val.intent_score, val.content_hash, 'HIGH', val.activity_focus,
+			'PROGRAM_LAUNCH', true, val.published_date, NOW()
+		FROM val
+		WHERE NOT EXISTS (
+			SELECT 1 FROM intelligence.company_signals cs
+			WHERE (cs.source_url = val.source_url AND val.source_url IS NOT NULL AND val.source_url != '') 
+			   OR cs.content_hash = val.content_hash
+		);
+	`
+
+	_, err := r.dbPool.Exec(ctx, query,
+		companyID,
+		compNameTrunc,
+		industrySector,
+		sourceType,
+		f.SourceURL,
+		summary,
+		pillar,
+		f.Title,
+		intentScore,
+		contentHash,
+		activityFocus,
+		pubDate,
+		estimatedBudget,
+	)
+
+	if err != nil {
+		log.Printf("Warning: Failed to mirror AI research finding to company_signals: %v", err)
+	} else if estimatedBudget > 0 {
+		_, _ = r.dbPool.Exec(ctx, `
+			UPDATE intelligence.company_signals
+			SET estimated_budget_signal = $1
+			WHERE ((source_url = $2 AND source_url IS NOT NULL AND source_url != '') OR content_hash = $3)
+			  AND (estimated_budget_signal IS NULL OR estimated_budget_signal = 0);
+		`, estimatedBudget, f.SourceURL, contentHash)
+	}
 }
 
 // ListFindings queries research findings with filtering for Admin Review Console
@@ -310,7 +525,7 @@ func (r *AIAgentRepository) ReviewFinding(ctx context.Context, findingID uuid.UU
 		_ = json.Unmarshal(evidenceBytes, &f.EvidenceData)
 	}
 
-	// If approved, promote finding to intelligence.company_signals (for /signals page) AND company_csr_programs
+	// If approved, promote finding to intelligence.company_signals (for /signals page) AND company_enriched_programs
 	if newStatus == "approved" {
 		contentHash := fmt.Sprintf("finding_%s", f.ID.String())
 		sourceType := f.SourceType
@@ -355,7 +570,7 @@ func (r *AIAgentRepository) ReviewFinding(ctx context.Context, findingID uuid.UU
 
 		if companyID != nil {
 			_, _ = r.dbPool.Exec(ctx, `
-				INSERT INTO company_csr_programs (company_id, name, description, partner_ngo, created_at, updated_at)
+				INSERT INTO company_enriched_programs (company_id, name, description, partner_ngo, created_at, updated_at)
 				VALUES ($1, $2, $3, $4, NOW(), NOW())
 				ON CONFLICT DO NOTHING;
 			`, companyID, f.Title, f.Summary, f.SourceName)
@@ -377,8 +592,8 @@ func (r *AIAgentRepository) SeedAgentCredential(ctx context.Context, agentName, 
 	query := `
 		INSERT INTO ai_agent_credentials (agent_name, api_key_hash, scopes, is_active, created_at, updated_at)
 		VALUES ($1, $2, $3, true, NOW(), NOW())
-		ON CONFLICT (agent_name) DO UPDATE
-		SET api_key_hash = EXCLUDED.api_key_hash, scopes = EXCLUDED.scopes, is_active = true, updated_at = NOW();
+		ON CONFLICT (api_key_hash) DO UPDATE
+		SET agent_name = EXCLUDED.agent_name, scopes = EXCLUDED.scopes, is_active = true, updated_at = NOW();
 	`
 
 	_, err := r.dbPool.Exec(ctx, query, agentName, keyHash, scopes)

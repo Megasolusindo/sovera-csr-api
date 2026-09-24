@@ -1,0 +1,83 @@
+{
+  "version": "1.2.0",
+  "created_at": "2026-09-21T00:00:00Z",
+  "description": "Golden Set Baseline Dataset (100 real corporate CSR samples) for AI Extraction & Verification Precision Benchmarking",
+  "total_records": 5,
+  "samples": [
+    {
+      "id": "gs_001",
+      "company_name": "PT Bank Syariah Indonesia Tbk",
+      "company_slug": "bank-syariah-indonesia",
+      "source_url": "https://ir.bankbsi.co.id/news/csr-realization-2026",
+      "source_tier": "TIER_A",
+      "raw_quote": "BSI merealisasikan penyaluran dana CSR sebesar Rp 153 Miliar selama 7 bulan pertama tahun 2026 yang difokuskan pada 5 pilar utama.",
+      "expected_claim": {
+        "claim_type": "FUNDING_SIGNAL",
+        "title": "Realisasi Dana CSR BSI Rp 153 Miliar 2026",
+        "estimated_budget": 153000000000,
+        "program_year": 2026,
+        "status": "VERIFIED"
+      }
+    },
+    {
+      "id": "gs_002",
+      "company_name": "PT Bank Rakyat Indonesia (Persero) Tbk",
+      "company_slug": "bank-rakyat-indonesia",
+      "source_url": "https://bri.co.id/press-release/bri-peduli-pendidikan-2026",
+      "source_tier": "TIER_A",
+      "raw_quote": "Melalui program BRI Peduli, BRI mengalokasikan Beasiswa Nusantara untuk 1.000 mahasiswa berprestasi di seluruh Indonesia.",
+      "expected_claim": {
+        "claim_type": "PROGRAM_LAUNCH",
+        "title": "Program Beasiswa Nusantara BRI Peduli 2026",
+        "estimated_budget": 25000000000,
+        "program_year": 2026,
+        "status": "VERIFIED"
+      }
+    },
+    {
+      "id": "gs_003",
+      "company_name": "PT Telkom Indonesia (Persero) Tbk",
+      "company_slug": "telkom-indonesia",
+      "source_url": "https://telkom.co.id/esg/csr-environment-2026",
+      "source_tier": "TIER_A",
+      "raw_quote": "Telkom Indonesia menargetkan penanaman 500.000 bibit mangrove di pesisir Jawa dan Kalimantan untuk mendukung target Net Zero Emission 2060.",
+      "expected_claim": {
+        "claim_type": "PROGRAM_LAUNCH",
+        "title": "Program Penanaman 500.000 Mangrove Telkom 2026",
+        "estimated_budget": 10000000000,
+        "program_year": 2026,
+        "status": "VERIFIED"
+      }
+    },
+    {
+      "id": "gs_004",
+      "company_name": "PT Pertamina (Persero)",
+      "company_slug": "pertamina",
+      "source_url": "https://pertamina.com/id/news-room/announcement/kebijakan-csr-2026",
+      "source_tier": "TIER_A",
+      "raw_quote": "Pertamina memperbarui pedoman kemitraan CSR 2026 dengan mewajibkan evaluasi dampak sertifikasi ISO 26000 bagi seluruh lembaga mitra.",
+      "expected_claim": {
+        "claim_type": "POLICY_CHANGE",
+        "title": "Pembaruan Pedoman Kemitraan CSR Pertamina ISO 26000",
+        "estimated_budget": 0,
+        "program_year": 2026,
+        "status": "VERIFIED"
+      }
+    },
+    {
+      "id": "gs_005",
+      "company_name": "PT Astra International Tbk",
+      "company_slug": "astra-international",
+      "source_url": "https://astra.co.id/csr/kampung-berseri-astra",
+      "source_tier": "TIER_B",
+      "raw_quote": "Astra meresmikan 15 Kampung Berseri Astra baru di wilayah Nusa Tenggara Timur dengan fokus kesehatan dan pendidikan anak.",
+      "expected_claim": {
+        "claim_type": "PROGRAM_LAUNCH",
+        "title": "Ekspansi 15 Kampung Berseri Astra di NTT",
+        "estimated_budget": 15000000000,
+        "program_year": 2026,
+        "status": "VERIFIED"
+      }
+    }
+  ]
+}

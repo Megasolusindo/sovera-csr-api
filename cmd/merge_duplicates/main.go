@@ -85,8 +85,8 @@ func main() {
 		// Transfer company_csr_profiles if exists
 		_, _ = tx.Exec(ctx, `UPDATE company_csr_profiles SET company_id = $1 WHERE company_id = $2`, p.CanonicalID, p.DuplicateID)
 
-		// Transfer company_csr_programs if exists
-		_, _ = tx.Exec(ctx, `UPDATE company_csr_programs SET company_id = $1 WHERE company_id = $2`, p.CanonicalID, p.DuplicateID)
+		// Transfer company_csr_programs (now company_enriched_programs) if exists
+		_, _ = tx.Exec(ctx, `UPDATE company_enriched_programs SET company_id = $1 WHERE company_id = $2`, p.CanonicalID, p.DuplicateID)
 
 		// Transfer company_key_persons if table exists
 		_, _ = tx.Exec(ctx, `UPDATE company_key_persons SET company_id = $1 WHERE company_id = $2`, p.CanonicalID, p.DuplicateID)

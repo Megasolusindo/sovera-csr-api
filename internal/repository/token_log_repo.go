@@ -58,7 +58,7 @@ func (r *TokenLogRepository) LogUsage(ctx context.Context, orgID, dealID, featur
 
 	return WithTenantContext(ctx, r.dbPool, cleanOrgID, func(tx pgx.Tx) error {
 		query := `
-			INSERT INTO crm.ai_token_logs (
+			INSERT INTO public.ai_token_logs (
 				org_id, deal_id, feature_name, model_name, prompt_tokens, completion_tokens, total_tokens, estimated_cost_usd
 			) VALUES (
 				$1::uuid, NULLIF($2, '')::uuid, $3, $4, $5, $6, $7, $8
@@ -94,7 +94,7 @@ func (r *TokenLogRepository) GetTenantTokenSummary(ctx context.Context, orgID st
 				COALESCE(SUM(completion_tokens), 0),
 				COALESCE(SUM(total_tokens), 0),
 				COALESCE(SUM(estimated_cost_usd), 0)
-			FROM crm.ai_token_logs
+			FROM public.ai_token_logs
 			WHERE org_id = $1::uuid;
 		`
 		err := tx.QueryRow(ctx, aggQuery, cleanOrgID).Scan(
@@ -114,7 +114,7 @@ func (r *TokenLogRepository) GetTenantTokenSummary(ctx context.Context, orgID st
 			SELECT 
 				id::text, org_id::text, COALESCE(deal_id::text, ''), feature_name, model_name,
 				prompt_tokens, completion_tokens, total_tokens, estimated_cost_usd, created_at
-			FROM crm.ai_token_logs
+			FROM public.ai_token_logs
 			WHERE org_id = $1::uuid
 			ORDER BY created_at DESC
 			LIMIT 10;
@@ -177,7 +177,7 @@ func (r *TokenLogRepository) GetAllTokenStats(ctx context.Context) (*GlobalToken
 			COALESCE(SUM(total_tokens), 0),
 			COALESCE(SUM(estimated_cost_usd), 0),
 			COUNT(DISTINCT org_id)
-		FROM crm.ai_token_logs;
+		FROM public.ai_token_logs;
 	`
 	_ = r.dbPool.QueryRow(ctx, aggQuery).Scan(
 		&summary.TotalPromptTokens,
@@ -201,7 +201,7 @@ func (r *TokenLogRepository) GetAllTokenStats(ctx context.Context) (*GlobalToken
 			l.total_tokens,
 			l.estimated_cost_usd,
 			l.created_at
-		FROM crm.ai_token_logs l
+		FROM public.ai_token_logs l
 		LEFT JOIN organizations o ON o.id = l.org_id
 		ORDER BY l.created_at DESC
 		LIMIT 20;

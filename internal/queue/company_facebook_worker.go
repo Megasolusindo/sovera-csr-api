@@ -82,29 +82,42 @@ func (w *CompanyFacebookWorker) HandleCompanyFacebookBatchCheck(ctx context.Cont
 			res := w.verifier.ValidateFacebookURL(ctx, tgt.FacebookURL)
 			totalChecked++
 
-			status := "INVALID"
-			lastErr := ""
+			var status string
+			var lastErr string
+
 			if res.IsValid {
 				status = "VALID"
 				totalValid++
+				_, err := w.dbPool.Exec(ctx, `
+					UPDATE company.companies
+					SET facebook_status = 'VALID',
+						facebook_verified_at = NOW(),
+						facebook_last_error = NULL,
+						updated_at = NOW()
+					WHERE id::text = $1
+				`, tgt.ID)
+				if err != nil {
+					log.Printf("[CompanyFacebookWorker] Error updating status for %s (%s): %v", tgt.Name, tgt.ID, err)
+				}
 			} else {
 				status = "INVALID"
 				lastErr = res.Reason
 				totalInvalid++
+				_, err := w.dbPool.Exec(ctx, `
+					UPDATE company.companies
+					SET facebook_url = NULL,
+						facebook_status = NULL,
+						facebook_verified_at = NOW(),
+						facebook_last_error = $1,
+						updated_at = NOW()
+					WHERE id::text = $2
+				`, lastErr, tgt.ID)
+				if err != nil {
+					log.Printf("[CompanyFacebookWorker] Error clearing invalid URL for %s (%s): %v", tgt.Name, tgt.ID, err)
+				}
 			}
 
-			_, err := w.dbPool.Exec(ctx, `
-				UPDATE company.companies
-				SET facebook_status = $1,
-					facebook_verified_at = NOW(),
-					facebook_last_error = $2,
-					updated_at = NOW()
-				WHERE id::text = $3
-			`, status, lastErr, tgt.ID)
-
-			if err != nil {
-				log.Printf("[CompanyFacebookWorker] Error updating status for %s (%s): %v", tgt.Name, tgt.ID, err)
-			} else if totalChecked%10 == 0 || !res.IsValid {
+			if totalChecked%10 == 0 || !res.IsValid {
 				log.Printf("[CompanyFacebookWorker] [%d] %s (%s) => %s | Reason: %s",
 					totalChecked, tgt.Name, tgt.ID, status, res.Reason)
 			}

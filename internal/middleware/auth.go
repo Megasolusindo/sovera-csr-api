@@ -2,12 +2,53 @@ package middleware
 
 import (
 	"fmt"
+	"log"
 	"strings"
 
 	"github.com/gofiber/fiber/v2"
-	"github.com/redis/go-redis/v9"
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/redis/go-redis/v9"
+
+	"sovera-core-api/internal/repository"
 )
+
+// AuthenticateJWTOrAgentKey validates JWT Bearer tokens or AI Agent Keys
+func AuthenticateJWTOrAgentKey(secretKey string, dbPool *pgxpool.Pool, rdb ...*redis.Client) fiber.Handler {
+	jwtHandler := AuthenticateJWT(secretKey, rdb...)
+	if dbPool == nil {
+		return jwtHandler
+	}
+	agentRepo := repository.NewAIAgentRepository(dbPool)
+
+	return func(c *fiber.Ctx) error {
+		var tokenString string
+		authHeader := c.Get("Authorization")
+		if authHeader != "" {
+			parts := strings.SplitN(authHeader, " ", 2)
+			if len(parts) == 2 && strings.EqualFold(parts[0], "Bearer") {
+				tokenString = strings.TrimSpace(parts[1])
+			}
+		}
+		if tokenString == "" {
+			tokenString = c.Get("X-API-Key")
+		}
+
+		if tokenString != "" && (!strings.Contains(tokenString, ".") || strings.HasPrefix(tokenString, "openclaw_")) {
+			agent, err := agentRepo.ValidateToken(c.Context(), tokenString)
+			if err == nil && agent != nil {
+				c.Locals("ai_agent", agent)
+				c.Locals("agent_name", agent.AgentName)
+				c.Locals("role", "SUPERADMIN")
+				c.Locals("org_id", "00000000-0000-0000-0000-000000000000")
+				return c.Next()
+			} else {
+				log.Printf("[JWTOrAgentKey Auth Warning] ValidateToken failed for '%s': %v", tokenString, err)
+			}
+		}
+		return jwtHandler(c)
+	}
+}
 
 // AuthenticateJWT creates a Fiber middleware that validates JWT Bearer tokens
 // and extracts tenant claims. If rdb is provided, it also checks token revocation

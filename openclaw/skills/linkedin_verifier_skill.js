@@ -9,6 +9,7 @@ const { URL } = require('url');
 
 const rawBaseURL = process.env.CSR_API_BASE_URL || 'http://api:4000/api/v1';
 const CSR_API_BASE_URL = rawBaseURL.replace(/\/ai\/?$/, '');
+const OPENCLAW_AGENT_TOKEN = process.env.OPENCLAW_AGENT_TOKEN || 'openclaw_agent_live_key_998877665544';
 
 function httpRequest(urlStr, options = {}, postData = null) {
   return new Promise((resolve, reject) => {
@@ -22,6 +23,8 @@ function httpRequest(urlStr, options = {}, postData = null) {
       method: options.method || 'GET',
       headers: {
         'User-Agent': 'OpenClaw-AI-Agent/1.0',
+        'Authorization': `Bearer ${OPENCLAW_AGENT_TOKEN}`,
+        'X-API-Key': OPENCLAW_AGENT_TOKEN,
         ...options.headers,
       },
     };

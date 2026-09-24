@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -281,28 +282,28 @@ func (r *ESGProfileRepository) GetESGIntelligence(ctx context.Context, search, c
 	argIdx := 1
 
 	if search != "" {
-		whereClause += fmt.Sprintf(" AND (t.code ILIKE $%d OR t.name ILIKE $%d OR t.description ILIKE $%d)", argIdx, argIdx, argIdx)
+		whereClause += " AND (t.code ILIKE $" + strconv.Itoa(argIdx) + " OR t.name ILIKE $" + strconv.Itoa(argIdx) + " OR t.description ILIKE $" + strconv.Itoa(argIdx) + ")"
 		args = append(args, "%"+search+"%")
 		argIdx++
 	}
 
 	if category != "" {
-		whereClause += fmt.Sprintf(" AND t.category ILIKE $%d", argIdx)
+		whereClause += " AND t.category ILIKE $" + strconv.Itoa(argIdx)
 		args = append(args, "%"+category+"%")
 		argIdx++
 	}
 
-	query := fmt.Sprintf(`
+	query := `
 		SELECT 
 			t.id::text, t.code, t.name, t.category, COALESCE(t.description, ''),
 			COUNT(DISTINCT mt.esg_profile_id) as reporting_entities,
 			COALESCE(AVG(mt.materiality_score), 4.5)::double precision as avg_quality_score
 		FROM esg_material_topics t
 		LEFT JOIN company_esg_material_topics mt ON mt.topic_id = t.id
-		%s
+		` + whereClause + `
 		GROUP BY t.id, t.code, t.name, t.category, t.description
 		ORDER BY reporting_entities DESC, t.category ASC;
-	`, whereClause)
+	`
 
 	rows, err := r.pool.Query(ctx, query, args...)
 	if err != nil {

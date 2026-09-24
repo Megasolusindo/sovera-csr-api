@@ -48,8 +48,8 @@ func WithTenantContext(ctx context.Context, pool *pgxpool.Pool, orgID string, fn
 	}()
 
 	// Set tenant context for PostgreSQL Kernel Row-Level Security (RLS)
-	// Use parameterized query to prevent SQL injection (pgx/v5 supports parameterized SET LOCAL)
-	_, err = tx.Exec(ctx, "SET LOCAL app.current_org_id = $1", orgID)
+	// Use set_config() function to properly support parameterized SQL in PostgreSQL
+	_, err = tx.Exec(ctx, "SELECT set_config('app.current_org_id', $1, true)", orgID)
 	if err != nil {
 		_ = tx.Rollback(ctx)
 		return fmt.Errorf("failed to set tenant RLS context: %w", err)

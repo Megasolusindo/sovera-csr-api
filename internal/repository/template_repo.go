@@ -37,7 +37,7 @@ func (r *TemplateRepository) GetTenantTemplate(ctx context.Context, orgID string
 	err := WithTenantContext(ctx, r.dbPool, orgID, func(tx pgx.Tx) error {
 		query := `
 			SELECT id::text, org_id::text, COALESCE(docx_s3_key, ''), COALESCE(pptx_s3_key, ''), COALESCE(brand_primary_color, '#047857'), COALESCE(logo_s3_key, '')
-			FROM crm.tenant_templates
+			FROM public.tenant_templates
 			WHERE org_id = $1::uuid;
 		`
 		return tx.QueryRow(ctx, query, orgID).Scan(
@@ -66,7 +66,7 @@ func (r *TemplateRepository) SaveTenantTemplateKey(ctx context.Context, orgID, f
 			col = "docx_s3_key"
 		}
 		query := fmt.Sprintf(`
-			INSERT INTO crm.tenant_templates (org_id, %s, updated_at)
+			INSERT INTO public.tenant_templates (org_id, %s, updated_at)
 			VALUES ($1::uuid, $2, NOW())
 			ON CONFLICT (org_id) DO UPDATE SET %s = EXCLUDED.%s, updated_at = NOW();
 		`, col, col, col)
@@ -86,7 +86,7 @@ func (r *TemplateRepository) ClearTenantTemplateKey(ctx context.Context, orgID, 
 			col = "docx_s3_key"
 		}
 		query := fmt.Sprintf(`
-			UPDATE crm.tenant_templates 
+			UPDATE public.tenant_templates 
 			SET %s = NULL, updated_at = NOW()
 			WHERE org_id = $1::uuid;
 		`, col)

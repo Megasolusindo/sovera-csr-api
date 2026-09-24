@@ -7,9 +7,18 @@
 const { exec } = require('child_process');
 const path = require('path');
 
+const fs = require('fs');
+
 function triggerLiveIDXSync() {
   return new Promise((resolve, reject) => {
-    const scriptPath = path.resolve(__dirname, '../../scripts/sync_idx_live.py');
+    let scriptPath = path.resolve(__dirname, '../../scripts/sync_idx_live.py');
+    if (!fs.existsSync(scriptPath)) {
+      if (fs.existsSync('/scripts/sync_idx_live.py')) {
+        scriptPath = '/scripts/sync_idx_live.py';
+      } else if (fs.existsSync('/app/scripts/sync_idx_live.py')) {
+        scriptPath = '/app/scripts/sync_idx_live.py';
+      }
+    }
     console.log(`[OpenClaw IDX Skill] Executing real live IDX ingestion script: ${scriptPath}`);
 
     exec(`python3 ${scriptPath}`, { timeout: 120000 }, (error, stdout, stderr) => {

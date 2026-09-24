@@ -256,4 +256,35 @@ sequenceDiagram
     AI->>AI: GenerateEmbedding (text-embedding-004, 1536-dim)
     AI->>DB: SaveSignal (Persist corporate signal + vector embedding)
     end
+
+---
+
+## 7. Background Workers & Automated Schedulers
+
+Platform backend menggunakan Redis Asynq Broker (`cmd/worker/main.go`) untuk mengeksekusi worker asinkron dan scheduler otomatis berkala:
+
+| Nama Worker | Task Queue Name | Cron Schedule | Fungsi & Alur Kerja Utama |
+| :--- | :--- | :---: | :--- |
+| **`CompanyEnrichmentWorker`** | `task:enrich_missing_websites` | `0 */6 * * *` (6 jam) | Menyeleksi perusahaan emiten Tbk yang websitenya kosong/placeholder (`https://-`), mencocokkan ticker dengan profil resmi IDX API (`GetCompanyProfiles`), memverifikasi domain via HTTP HEAD check, dan mengupdate `company.companies.website`. |
+| **`CompanyContactDiscoveryWorker`** | `task:company_contact_discovery` | `0 */6 * * *` (6 jam) | Menyeleksi perusahaan dengan `phone` atau `email` kosong. Menjalankan 3-tier empirical pipeline (Direct Website HTML Scraping $\rightarrow$ Serper Google Search $\rightarrow$ Normalisasi `phoneverifier` & RFC 5322 regex). |
+| **`CompanyLinkedInDiscoveryWorker`** | `task:company_linkedin_discovery_batch` | `0 */12 * * *` (12 jam) | Penemuan profil LinkedIn resmi korporasi melalui ekstraksi HTML website resmi dan Serper Google Search API. |
+| **`CompanyInstagramDiscoveryWorker`** | `task:company_instagram_discovery_batch` | `0 */12 * * *` (12 jam) | Penemuan profil Instagram resmi korporasi secara empiris dari website & Google Search API. |
+| **`URLHealthCheckWorker`** | `task:url_health_check` | `*/5 * * * *` (5 menit) | Memeriksa ketersediaan (health check) seluruh URL website dan medsos di database, mengupdate flag status `VALID` / `INVALID`. |
+| **`CompanyFacebook/Instagram/Youtube/LinkedIn Workers`** | Social Media Validation Queue | Continuous / Batch | Memvalidasi URL media sosial. **Aturan Mutlak:** Jika URL media sosial dinyatakan `INVALID` (404/broken), worker secara otomatis menghapus URL dari DB (`SET url = NULL, status = NULL`). |
+
+---
+
+## 8. Data Integrity & Empirical Enrichment Directives
+
+### A. Strict No Synthetic URL Reconstruction Directive
+- **Dilarang Keras Menebak Handle / URL Sintetis:** Under no circumstances should any synthetic, reconstructed, or slugified URLs be generated or inserted into `crawling_targets` or `company.companies` (misal: `https://www.facebook.com/{company-slug}`, `https://www.youtube.com/@{company-slug}`).
+- **Empirical & Verified Sources Only:** Seluruh URL media sosial, website, telepon, dan email wajib diperoleh dari sumber empiris aktif (ekstraksi HTML website resmi yang terverifikasi HTTP 2xx/3xx, atau hasil pencarian Google/Serper API).
+- **Auto-Purge on Failure:** Jika URL media sosial yang sudah tersimpan dinyatakan `INVALID` saat diuji oleh health worker, sistem secara otomatis mengosongkan URL tersebut (`url = NULL`) agar link rusak tidak pernah tampil di UI Dashboard.
+
+### B. Standardized Data Deduplication & Legacy Cleanup
+- **Prinsip Single Source of Truth:** Seluruh data korporasi terkonsolidasi di skema `company.companies`.
+- **Legacy Duplicate Resolution:** Jika terdapat record duplikat lama ber-suffix `[LEGACY <uuid>]`, sistem wajib:
+  1. Mereroute seluruh referensi tabel anak (`company_enriched_programs`, `intelligence.company_signals`, `crawling_targets`) ke ID record perusahaan utama (canonical record).
+  2. Menghapus (*delete*) record duplikat `[LEGACY]` yang telah kosong/orphaned secara aman melalui transaksi database.
+
 ```

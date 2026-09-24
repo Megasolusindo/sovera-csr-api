@@ -296,10 +296,7 @@ func (h *AdminHandler) GetAnalytics(c *fiber.Ctx) error {
 		_ = h.dbPool.QueryRow(c.UserContext(), "SELECT COUNT(*) FROM users").Scan(&totalUsers)
 	}
 
-	_ = h.dbPool.QueryRow(c.UserContext(), "SELECT COUNT(*) FROM company.company_csr_programs").Scan(&totalCSRPrograms)
-	if totalCSRPrograms == 0 {
-		_ = h.dbPool.QueryRow(c.UserContext(), "SELECT COUNT(*) FROM company_csr_programs").Scan(&totalCSRPrograms)
-	}
+	_ = h.dbPool.QueryRow(c.UserContext(), "SELECT COUNT(*) FROM company_enriched_programs").Scan(&totalCSRPrograms)
 
 	_ = h.dbPool.QueryRow(c.UserContext(), "SELECT COUNT(*) FROM public.crawling_targets").Scan(&totalScrapingJobs)
 	_ = h.dbPool.QueryRow(c.UserContext(), "SELECT COUNT(*) FROM public.crawling_targets WHERE is_active = true").Scan(&activeScrapingJobs)
@@ -609,7 +606,7 @@ func (h *AdminHandler) TriggerDeduplication(c *fiber.Ctx) error {
 			SELECT id, master_id FROM ranked WHERE id != master_id;
 
 			UPDATE intelligence.company_signals s SET company_id = b.master_id FROM temp_bad_companies b WHERE s.company_id = b.id;
-			UPDATE company_csr_programs p SET company_id = b.master_id FROM temp_bad_companies b WHERE p.company_id = b.id;
+			UPDATE company_enriched_programs p SET company_id = b.master_id FROM temp_bad_companies b WHERE p.company_id = b.id;
 			UPDATE crawling_targets t SET company_id = b.master_id FROM temp_bad_companies b WHERE t.company_id = b.id;
 			UPDATE company_esg_profiles e SET company_id = b.master_id FROM temp_bad_companies b WHERE e.company_id = b.id;
 

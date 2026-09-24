@@ -86,7 +86,7 @@ func (r *UserRepository) FindUserWithTenantByEmail(ctx context.Context, email st
 		SELECT 
 			u.id, u.org_id, u.email, u.password_hash, u.full_name, u.role, u.is_active, u.created_at, u.updated_at,
 			COALESCE(o.name, 'System') AS org_name,
-			COALESCE(o.type, 'ORGANIZATION') AS tenant_type,
+			COALESCE(o.org_type, 'ORGANIZATION') AS tenant_type,
 			o.company_id
 		FROM users u
 		LEFT JOIN organizations o ON o.id = u.org_id
@@ -111,7 +111,7 @@ func (r *UserRepository) FindUserWithTenantByID(ctx context.Context, id string) 
 		SELECT 
 			u.id, u.org_id, u.email, u.password_hash, u.full_name, u.role, u.is_active, u.created_at, u.updated_at,
 			COALESCE(o.name, 'System') AS org_name,
-			COALESCE(o.type, 'ORGANIZATION') AS tenant_type,
+			COALESCE(o.org_type, 'ORGANIZATION') AS tenant_type,
 			o.company_id
 		FROM users u
 		LEFT JOIN organizations o ON o.id = u.org_id

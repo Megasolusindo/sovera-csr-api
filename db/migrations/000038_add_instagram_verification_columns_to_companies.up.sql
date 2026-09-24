@@ -1,4 +1,4 @@
--- Migration 000031 Up: Add Instagram URL & verification columns to company.companies table and companies view
+-- Migration 000038 Up: Add Instagram URL & verification columns to company.companies table and companies view
 
 ALTER TABLE company.companies
 ADD COLUMN IF NOT EXISTS instagram_url TEXT,
@@ -8,7 +8,10 @@ ADD COLUMN IF NOT EXISTS instagram_last_error TEXT;
 
 CREATE INDEX IF NOT EXISTS idx_companies_instagram_status ON company.companies(instagram_status);
 
-CREATE OR REPLACE VIEW companies AS
+-- Drop and recreate view to avoid "cannot drop columns from view" error
+DROP VIEW IF EXISTS companies;
+
+CREATE VIEW companies AS
  SELECT c.id,
     c.name,
     c.legal_name,

@@ -111,3 +111,102 @@ func (h *ProgramHandler) CreateProgram(c *fiber.Ctx) error {
 
 	return c.Status(fiber.StatusCreated).JSON(prog)
 }
+
+func (h *ProgramHandler) UpdateProgram(c *fiber.Ctx) error {
+	orgID, ok := c.Locals("org_id").(string)
+	if !ok || orgID == "" {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"success": false,
+			"error":   "UNAUTHORIZED",
+			"message": "Organization context is required",
+		})
+	}
+
+	programID := c.Params("id")
+	if programID == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"success": false,
+			"error":   "INVALID_ID",
+			"message": "Program ID is required",
+		})
+	}
+
+	var payload CreateProgramPayload
+	if err := c.BodyParser(&payload); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"success": false,
+			"error":   "INVALID_PAYLOAD",
+			"message": "Failed to parse program payload",
+		})
+	}
+
+	if payload.Title == "" || payload.Description == "" {
+		return c.Status(fiber.StatusUnprocessableEntity).JSON(fiber.Map{
+			"success": false,
+			"error":   "MISSING_FIELDS",
+			"message": "Title and description are required",
+		})
+	}
+
+	if payload.PrimaryCluster == "" {
+		payload.PrimaryCluster = "COMMUNITY_DEVELOPMENT"
+	}
+	if payload.ESGPillar == "" {
+		payload.ESGPillar = "SOCIAL"
+	}
+
+	// Auto-generate updated vector embedding (1536 dim) for updated program text
+	textToEmbed := fmt.Sprintf("%s %s %s %s %s %s", payload.Title, payload.Description, payload.PrimaryCluster, strings.Join(payload.TargetSDGs, " "), payload.AsnafCategory, payload.ESGPillar)
+	embedding, err := h.geminiService.GenerateEmbedding(c.Context(), textToEmbed)
+	if err != nil {
+		embedding = make([]float32, 1536)
+	}
+
+	prog, err := h.programRepo.UpdateProgram(
+		c.Context(), orgID, programID, payload.Title, payload.Description,
+		payload.PrimaryCluster, payload.TargetSDGs, payload.AsnafCategory, payload.ESGPillar, payload.TargetBeneficiaries, embedding,
+	)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"success": false,
+			"error":   "UPDATE_FAILED",
+			"message": err.Error(),
+		})
+	}
+
+	return c.Status(fiber.StatusOK).JSON(prog)
+}
+
+func (h *ProgramHandler) DeleteProgram(c *fiber.Ctx) error {
+	orgID, ok := c.Locals("org_id").(string)
+	if !ok || orgID == "" {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"success": false,
+			"error":   "UNAUTHORIZED",
+			"message": "Organization context is required",
+		})
+	}
+
+	programID := c.Params("id")
+	if programID == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"success": false,
+			"error":   "INVALID_ID",
+			"message": "Program ID is required",
+		})
+	}
+
+	if err := h.programRepo.DeleteProgram(c.Context(), orgID, programID); err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"success": false,
+			"error":   "DELETE_FAILED",
+			"message": err.Error(),
+		})
+	}
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{
+		"success": true,
+		"message": "Program deleted successfully",
+	})
+}
+

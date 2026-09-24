@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strconv"
 	"strings"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -235,25 +236,25 @@ func (r *CompanyRepository) ListCompanies(ctx context.Context, limit, offset int
 	argIdx := 1
 
 	if search != "" {
-		whereClause += fmt.Sprintf(" AND (c.name ILIKE $%d OR c.legal_name ILIKE $%d OR c.slug ILIKE $%d OR c.ticker ILIKE $%d OR c.id::text ILIKE $%d OR array_to_string(c.alias_keywords, ' ') ILIKE $%d)", argIdx, argIdx, argIdx, argIdx, argIdx, argIdx)
+		whereClause += " AND (c.name ILIKE $" + strconv.Itoa(argIdx) + " OR c.legal_name ILIKE $" + strconv.Itoa(argIdx) + " OR c.slug ILIKE $" + strconv.Itoa(argIdx) + " OR c.ticker ILIKE $" + strconv.Itoa(argIdx) + " OR c.id::text ILIKE $" + strconv.Itoa(argIdx) + " OR array_to_string(c.alias_keywords, ' ') ILIKE $" + strconv.Itoa(argIdx) + ")"
 		args = append(args, "%"+strings.TrimSpace(search)+"%")
 		argIdx++
 	}
 
 	if sector != "" && sector != "ALL" {
-		whereClause += fmt.Sprintf(" AND c.industry_sector ILIKE $%d", argIdx)
+		whereClause += " AND c.industry_sector ILIKE $" + strconv.Itoa(argIdx)
 		args = append(args, "%"+sector+"%")
 		argIdx++
 	}
 
 	if companyType != "" && companyType != "ALL" {
-		whereClause += fmt.Sprintf(" AND UPPER(c.company_type) = UPPER($%d)", argIdx)
+		whereClause += " AND UPPER(c.company_type) = UPPER($" + strconv.Itoa(argIdx) + ")"
 		args = append(args, companyType)
 		argIdx++
 	}
 
 	if priorityTier != "" && priorityTier != "ALL" {
-		whereClause += fmt.Sprintf(" AND c.priority_tier = $%d", argIdx)
+		whereClause += " AND c.priority_tier = $" + strconv.Itoa(argIdx)
 		args = append(args, priorityTier)
 		argIdx++
 	}
@@ -264,13 +265,13 @@ func (r *CompanyRepository) ListCompanies(ctx context.Context, limit, offset int
 		whereClause += " AND (c.website IS NULL OR c.website = '')"
 	}
 
-	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM company.companies c %s", whereClause)
+	countQuery := "SELECT COUNT(*) FROM company.companies c " + whereClause
 	var total int
 	if err := r.pool.QueryRow(ctx, countQuery, args...).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("failed to count companies: %w", err)
 	}
 
-	query := fmt.Sprintf(`
+	query := `
 		SELECT 
 			c.id::text, c.name, c.legal_name, c.slug, c.industry_id, c.industry_sector,
 			c.company_type, c.website, c.linkedin_url, c.linkedin_status, c.instagram_url, c.instagram_status, c.facebook_url, c.facebook_status, c.youtube_url, c.youtube_status, c.headquarters,
@@ -280,10 +281,9 @@ func (r *CompanyRepository) ListCompanies(ctx context.Context, limit, offset int
 			(SELECT COUNT(*) FROM intelligence.company_signals s WHERE s.company_id = c.id OR s.company_name ILIKE c.name) AS signal_count,
 			COALESCE((SELECT SUM(s.estimated_budget_signal) FROM intelligence.company_signals s WHERE s.company_id = c.id OR s.company_name ILIKE c.name), 0) AS total_budget
 		FROM company.companies c
-		%s
+		` + whereClause + `
 		ORDER BY signal_count DESC, c.priority_tier ASC, c.name ASC
-		LIMIT $%d OFFSET $%d;
-	`, whereClause, argIdx, argIdx+1)
+		LIMIT $` + strconv.Itoa(argIdx) + ` OFFSET $` + strconv.Itoa(argIdx+1) + `;`
 
 	args = append(args, limit, offset)
 

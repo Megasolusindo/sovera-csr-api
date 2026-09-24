@@ -16,6 +16,7 @@ const (
 	TypeProposalGeneration = "task:proposal_generation"
 	TypeIDXSync            = "task:idx_sync"
 	TypeOpenClawResearch   = "task:openclaw_research"
+	TypeCompanyContactDiscoveryBatch = "task:company_contact_discovery"
 
 	QueueDispatchCrawling   = "dispatch-crawling-queue"
 	QueuePollPendingTasks   = "poll-pending-tasks-queue"
@@ -25,6 +26,7 @@ const (
 	QueueProposalGeneration = "proposal-generation-queue"
 	QueueIDXSync            = "idx-sync-queue"
 	QueueOpenClawResearch   = "openclaw-research-queue"
+	QueueCompanyContactDiscoveryBatch = "company-contact-discovery-queue"
 )
 
 type LLMExtractionPayload struct {
@@ -78,5 +80,9 @@ func NewOpenClawResearchTask(companyName string) (*asynq.Task, error) {
 	payload := map[string]string{"company_name": companyName}
 	bytes, _ := json.Marshal(payload)
 	return asynq.NewTask(TypeOpenClawResearch, bytes, asynq.Queue(QueueOpenClawResearch), asynq.MaxRetry(2)), nil
+}
+
+func NewCompanyContactDiscoveryBatchTask() (*asynq.Task, error) {
+	return asynq.NewTask(TypeCompanyContactDiscoveryBatch, []byte("{}"), asynq.Queue(QueueCompanyContactDiscoveryBatch), asynq.MaxRetry(1)), nil
 }
 

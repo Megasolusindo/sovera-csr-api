@@ -212,6 +212,8 @@ async function registerTelegramBotCommands() {
     { command: "discover_instagram", description: "Pencarian empiris Instagram perusahaan INVALID" },
     { command: "instagram_stats", description: "Lihat statistik audit Instagram seluruh perusahaan" },
     { command: "sync_idx", description: "Sinkronisasi real data emiten resmi dari IDX (BEI)" },
+    { command: "feed", description: "Pemicu instant sweep & tampilkan feed CSR terbaru" },
+    { command: "signals", description: "Tampilkan sinyal & feed CSR terbaru" },
     { command: "stats", description: "Lihat statistik real-time system of record & crawler" }
   ];
 

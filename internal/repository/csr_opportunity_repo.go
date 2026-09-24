@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"fmt"
+	"strconv"
 
 	"sovera-core-api/internal/model"
 
@@ -19,9 +20,9 @@ func NewCSROpportunityRepository(pool *pgxpool.Pool) *CSROpportunityRepository {
 
 func (r *CSROpportunityRepository) Create(ctx context.Context, opp model.CSROpportunity) (*model.CSROpportunity, error) {
 	query := `
-		INSERT INTO csr_opportunities (company_id, tenant_id, title, description, category, target_location, budget_amount, open_until, status, created_by_user_id)
+		INSERT INTO csr_opportunities (company_id, org_id, title, description, category, target_location, budget_amount, open_until, status, created_by_user_id)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-		RETURNING id, company_id, tenant_id, title, description, category, target_location, budget_amount, open_until, status, created_by_user_id, created_at, updated_at;
+		RETURNING id, company_id, org_id, title, description, category, target_location, budget_amount, open_until, status, created_by_user_id, created_at, updated_at;
 	`
 	var created model.CSROpportunity
 	err := r.pool.QueryRow(ctx, query,
@@ -52,31 +53,30 @@ func (r *CSROpportunityRepository) ListPublic(ctx context.Context, page, pageSiz
 	argIdx := 1
 
 	if category != "" {
-		baseWhere += fmt.Sprintf(" AND category = $%d", argIdx)
+		baseWhere += " AND category = $" + strconv.Itoa(argIdx)
 		args = append(args, category)
 		argIdx++
 	}
 
 	if search != "" {
-		baseWhere += fmt.Sprintf(" AND (title ILIKE $%d OR COALESCE(description, '') ILIKE $%d)", argIdx, argIdx)
+		baseWhere += " AND (title ILIKE $" + strconv.Itoa(argIdx) + " OR COALESCE(description, '') ILIKE $" + strconv.Itoa(argIdx) + ")"
 		args = append(args, "%"+search+"%")
 		argIdx++
 	}
 
-	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM csr_opportunities %s", baseWhere)
+	countQuery := "SELECT COUNT(*) FROM csr_opportunities " + baseWhere
 	var total int
 	err := r.pool.QueryRow(ctx, countQuery, args...).Scan(&total)
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to count opportunities: %w", err)
 	}
 
-	query := fmt.Sprintf(`
-		SELECT id, company_id, tenant_id, title, COALESCE(description, ''), category, COALESCE(target_location, ''), budget_amount, open_until, status, created_by_user_id, created_at, updated_at
+	query := `
+		SELECT id, company_id, org_id, title, COALESCE(description, ''), category, COALESCE(target_location, ''), budget_amount, open_until, status, created_by_user_id, created_at, updated_at
 		FROM csr_opportunities
-		%s
+		` + baseWhere + `
 		ORDER BY created_at DESC
-		LIMIT $%d OFFSET $%d;
-	`, baseWhere, argIdx, argIdx+1)
+		LIMIT $` + strconv.Itoa(argIdx) + ` OFFSET $` + strconv.Itoa(argIdx+1) + `;`
 
 	args = append(args, pageSize, offset)
 

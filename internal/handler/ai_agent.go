@@ -146,19 +146,18 @@ func (h *AIAgentHandler) SearchCorporateData(c *fiber.Ctx) error {
 		}
 	}
 
-	// 2. Query company_csr_programs if results < 10
-	if len(results) < 10 {
-		progQuery := `
+		// 2. Query company_enriched_programs if results < 10
+		if len(results) < 10 {
+			progQuery := `
 			SELECT 
-				p.id::text, c.name, COALESCE(p.program_name, ''), COALESCE(p.description, ''), 
-				COALESCE(p.target_location, ''), COALESCE(p.budget_amount, 0), COALESCE(c.website, '')
-			FROM company_csr_programs p
+				p.id::text, c.name, COALESCE(p.name, ''), 				COALESCE(p.impact_summary, ''), 
+				'', COALESCE(p.budget_amount, 0), COALESCE(c.website, '')
+			FROM company_enriched_programs p
 			JOIN companies c ON c.id = p.company_id
 			WHERE 
 				c.name ILIKE $1 
-				OR p.program_name ILIKE $1 
-				OR p.description ILIKE $1 
-				OR p.target_location ILIKE $1
+				OR p.name ILIKE $1 
+				OR p.impact_summary ILIKE $1 
 			LIMIT 10;
 		`
 		progRows, progErr := h.dbPool.Query(c.Context(), progQuery, searchPattern)

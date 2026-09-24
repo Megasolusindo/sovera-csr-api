@@ -81,35 +81,7 @@ func main() {
 		}
 		chunk := companies[i:end]
 
-		batch := &pgx.Batch{}
-		for _, c := range chunk {
-			slug := generateCompanySlug(c.Name)
-			if slug == "" {
-				slug = c.Slug
-			}
-
-			instagramURL := fmt.Sprintf("https://www.instagram.com/%s", slug)
-			facebookURL := fmt.Sprintf("https://www.facebook.com/%s", slug)
-			youtubeURL := fmt.Sprintf("https://www.youtube.com/@%s", slug)
-
-			// 1. Queue Update company.companies with social media URLs
-			batch.Queue(`
-				UPDATE company.companies
-				SET instagram_url = COALESCE(instagram_url, $1),
-				    facebook_url = COALESCE(facebook_url, $2),
-				    youtube_url = COALESCE(youtube_url, $3),
-				    updated_at = NOW()
-				WHERE id = $4;
-			`, instagramURL, facebookURL, youtubeURL, c.ID)
-
-			// 2. Queue Instagram Targets
-			igOfficial := fmt.Sprintf("Instagram Official - %s", c.Name)
-			batch.Queue(`
-				INSERT INTO crawling_targets (company_id, source_name, source_type, target_url, check_interval_hours, is_active, health_status, next_run_at, created_at, updated_at)
-				VALUES ($1, $2, 'COMPANY_WEBSITE', $3, 24, true, 'HEALTHY', NOW(), NOW(), NOW())
-				ON CONFLICT DO NOTHING;
-			`, c.ID, igOfficial, instagramURL)
-
+			// 1. Register empirical Google News RSS Feed Targets for Instagram, Facebook, and YouTube
 			igRssQuery := url.QueryEscape(fmt.Sprintf("site:instagram.com %s TJSL OR CSR OR Beasiswa OR UMKM", c.Name))
 			igRssURL := fmt.Sprintf("https://news.google.com/rss/search?q=%s&hl=id&gl=ID&ceid=ID:id", igRssQuery)
 			igRssName := fmt.Sprintf("Google News RSS (Instagram Posts) - %s", c.Name)
@@ -118,14 +90,6 @@ func main() {
 				VALUES ($1, $2, 'NEWS_RSS', $3, 12, true, 'HEALTHY', NOW(), NOW(), NOW())
 				ON CONFLICT DO NOTHING;
 			`, c.ID, igRssName, igRssURL)
-
-			// 3. Queue Facebook Targets
-			fbOfficial := fmt.Sprintf("Facebook Official - %s", c.Name)
-			batch.Queue(`
-				INSERT INTO crawling_targets (company_id, source_name, source_type, target_url, check_interval_hours, is_active, health_status, next_run_at, created_at, updated_at)
-				VALUES ($1, $2, 'COMPANY_WEBSITE', $3, 24, true, 'HEALTHY', NOW(), NOW(), NOW())
-				ON CONFLICT DO NOTHING;
-			`, c.ID, fbOfficial, facebookURL)
 
 			fbRssQuery := url.QueryEscape(fmt.Sprintf("site:facebook.com %s TJSL OR CSR OR Beasiswa OR UMKM", c.Name))
 			fbRssURL := fmt.Sprintf("https://news.google.com/rss/search?q=%s&hl=id&gl=ID&ceid=ID:id", fbRssQuery)

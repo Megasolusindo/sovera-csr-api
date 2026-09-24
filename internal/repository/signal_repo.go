@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -60,6 +61,11 @@ func (r *SignalRepository) SaveSignal(ctx context.Context, signal *ai.ExtractedS
 		relevance = "HIGH"
 	}
 
+	budget := signal.EstimatedBudgetSignal
+	if budget == 0 {
+		budget = ParseEstimatedBudgetFromText(signal.Summary + " " + signal.TriggerEvent)
+	}
+
 	query := `
 		INSERT INTO intelligence.company_signals (
 			company_id, company_name, industry_sector, source_type, source_url, summary, 
@@ -71,6 +77,7 @@ func (r *SignalRepository) SaveSignal(ctx context.Context, signal *ai.ExtractedS
 			company_id = EXCLUDED.company_id,
 			company_name = EXCLUDED.company_name,
 			summary = EXCLUDED.summary,
+			estimated_budget_signal = EXCLUDED.estimated_budget_signal,
 			intent_score = EXCLUDED.intent_score,
 			csr_relevance = EXCLUDED.csr_relevance,
 			activity_focus = EXCLUDED.activity_focus,
@@ -84,7 +91,7 @@ func (r *SignalRepository) SaveSignal(ctx context.Context, signal *ai.ExtractedS
 	err := r.dbPool.QueryRow(
 		ctx, query,
 		companyID, signal.CompanyName, signal.IndustrySector, sourceType, sourceURL, signal.Summary,
-		signal.CSRPillarFocus, signal.TargetRegions, signal.EstimatedBudgetSignal, signal.TriggerEvent,
+		signal.CSRPillarFocus, signal.TargetRegions, budget, signal.TriggerEvent,
 		signal.IntentScore, contentHash, relevance, signal.ActivityFocus, signal.ActionType, signal.OpportunityAlert,
 	).Scan(&insertedID)
 
@@ -106,24 +113,24 @@ func (r *SignalRepository) ListSignals(ctx context.Context, limit, offset, minIn
 	argIdx := 2
 
 	if search != "" {
-		whereClause += fmt.Sprintf(" AND (company_name ILIKE $%d OR summary ILIKE $%d OR trigger_event ILIKE $%d OR activity_focus ILIKE $%d)", argIdx, argIdx, argIdx, argIdx)
+		whereClause += " AND (company_name ILIKE $" + strconv.Itoa(argIdx) + " OR summary ILIKE $" + strconv.Itoa(argIdx) + " OR trigger_event ILIKE $" + strconv.Itoa(argIdx) + " OR activity_focus ILIKE $" + strconv.Itoa(argIdx) + ")"
 		args = append(args, "%"+strings.TrimSpace(search)+"%")
 		argIdx++
 	}
 
 	if industry != "" && industry != "ALL" && industry != "Semua Sektor" {
-		whereClause += fmt.Sprintf(" AND industry_sector ILIKE $%d", argIdx)
+		whereClause += " AND industry_sector ILIKE $" + strconv.Itoa(argIdx)
 		args = append(args, "%"+strings.TrimSpace(industry)+"%")
 		argIdx++
 	}
 
-	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM intelligence.company_signals %s", whereClause)
+	countQuery := "SELECT COUNT(*) FROM intelligence.company_signals " + whereClause
 	var total int
 	if err := r.dbPool.QueryRow(ctx, countQuery, args...).Scan(&total); err != nil {
 		return []CorporateSignal{}, 0, err
 	}
 
-	query := fmt.Sprintf(`
+	query := `
 		SELECT 
 			id::text, company_name, COALESCE(industry_sector, ''), COALESCE(source_type::text, 'NEWS_RSS'), COALESCE(source_url, ''),
 			COALESCE(summary, ''), COALESCE(extracted_pillar, ''), COALESCE(target_regions, '{}'), 
@@ -131,10 +138,9 @@ func (r *SignalRepository) ListSignals(ctx context.Context, limit, offset, minIn
 			COALESCE(csr_relevance, 'HIGH'), COALESCE(activity_focus, ''), COALESCE(action_type, ''), COALESCE(opportunity_alert, false),
 			COALESCE(published_date, CURRENT_DATE), created_at
 		FROM intelligence.company_signals
-		%s
+		` + whereClause + `
 		ORDER BY created_at DESC, intent_score DESC
-		LIMIT $%d OFFSET $%d;
-	`, whereClause, argIdx, argIdx+1)
+		LIMIT $` + strconv.Itoa(argIdx) + ` OFFSET $` + strconv.Itoa(argIdx+1) + `;`
 
 	args = append(args, limit, offset)
 
@@ -180,7 +186,7 @@ func (r *SignalRepository) MatchTenantPrograms(ctx context.Context, orgID, signa
 				COALESCE(p.asnaf_category, ''), 
 				COALESCE(p.esg_pillar, ''),
 				0.88 AS similarity_score
-			FROM institution_programs p, intelligence.company_signals s
+			FROM ngo_managed_programs p, intelligence.company_signals s
 			WHERE s.id = $1::uuid
 			LIMIT $2;
 		`

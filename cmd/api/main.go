@@ -22,6 +22,7 @@ import (
 	"sovera-core-api/internal/middleware"
 	"sovera-core-api/internal/payment"
 	"sovera-core-api/internal/payment/midtrans"
+	"sovera-core-api/internal/pkg/serper"
 	"sovera-core-api/internal/pkg/telegram"
 	"sovera-core-api/internal/queue"
 	"sovera-core-api/internal/repository"
@@ -82,6 +83,11 @@ func main() {
 	textNormalizer := normalizer.NewNormalizer()
 	storageService := storage.NewStorageService()
 	telegramNotifier := telegram.NewNotifier(cfg.TelegramBotToken, cfg.TelegramChatID)
+	serperMonitor := serper.InitDefaultMonitor(cfg.SerperAPIKey, telegramNotifier)
+	go func() {
+		time.Sleep(2 * time.Second)
+		_, _ = serperMonitor.CheckAndNotify(context.Background())
+	}()
 
 	signalRepo := repository.NewSignalRepository(dbPool)
 	programRepo := repository.NewProgramRepository(dbPool)
@@ -178,7 +184,12 @@ func main() {
 	// Seed default OpenClaw AI Agent credential if DB pool is ready
 	if dbPool != nil && cfg.OpenClawAgentToken != "" {
 		aiRepo := repository.NewAIAgentRepository(dbPool)
-		_ = aiRepo.SeedAgentCredential(context.Background(), "openclaw-research-agent", cfg.OpenClawAgentToken, []string{"research:create", "company:read", "csr_program:create"})
+		if err := aiRepo.SeedAgentCredential(context.Background(), "openclaw-research-agent", cfg.OpenClawAgentToken, []string{"research:create", "company:read", "csr_program:create"}); err != nil {
+			log.Printf("[AI Agent Seed Error] %v", err)
+		}
+		if err := aiRepo.SeedAgentCredential(context.Background(), "openclaw-agent-legacy", "openclaw_agent_live_key_998877665544", []string{"research:create", "company:read", "csr_program:create"}); err != nil {
+			log.Printf("[AI Agent Seed Error Legacy] %v", err)
+		}
 	}
 
 	// Root & Health check routes (public)
@@ -189,6 +200,8 @@ func main() {
 	apiV1.Post("/webhooks/midtrans", paymentWebhookHandler.HandleMidtransWebhook)
 	apiV1.Post("/webhooks/faspay", faspayWebhookHandler.HandleFaspayWebhook)
 	apiV1.Get("/subscription/plans", subHandler.ListPlans)
+
+	aiToolsHandler := handler.NewAIToolsHandler(dbPool)
 
 	// ─── OpenClaw AI Agent Dedicated API Namespace (/api/v1/ai/*) ────────────
 	aiGroup := apiV1.Group("/ai", middleware.AIAgentAuthMiddleware(dbPool, ""))
@@ -203,6 +216,13 @@ func main() {
 	aiGroup.Post("/companies/:id/enrich", aiAgentHandler.EnrichCompany)
 	aiGroup.Post("/matching", aiAgentHandler.MatchProgram)
 	aiGroup.Get("/search", aiAgentHandler.SearchCorporateData)
+
+	// Granular Tool API Surface (§4.4)
+	toolsGroup := aiGroup.Group("/tools")
+	toolsGroup.Post("/search_companies", aiToolsHandler.SearchCompanies)
+	toolsGroup.Post("/get_csr_signals", aiToolsHandler.GetCSRSignals)
+	toolsGroup.Post("/match_opportunity", aiToolsHandler.MatchOpportunity)
+	toolsGroup.Post("/send_session_alert", aiToolsHandler.SendSessionAlert)
 
 	// ─── Dashboard AI Chat Dedicated API Namespace (/api/v1/tenant-ai/* & /api/v1/org-ai/*) ───
 	tenantAIGuard := middleware.OrgAIAuthMiddleware(cfg.JWTSecret)
@@ -244,8 +264,8 @@ func main() {
 		webhookHandler.HandleCrawlerWebhook,
 	)
 
-	// ─── JWT-Protected Routes ─────────────────────────────────────────────────
-	jwtGuard := middleware.AuthenticateJWT(cfg.JWTSecret, rdb)
+	// ─── JWT & AI Agent Protected Routes ──────────────────────────────────────
+	jwtGuard := middleware.AuthenticateJWTOrAgentKey(cfg.JWTSecret, dbPool, rdb)
 	tenantGeneralLimit := middleware.TenantRateLimit(generalRateLimiterStore, 120, 1*time.Minute, "API General")
 	tenantAILimit := middleware.TenantRateLimit(aiRateLimiterStore, 10, 1*time.Minute, "Generasi AI Proposal & Pitch")
 
@@ -313,28 +333,28 @@ func main() {
 	// Companies Directory & CSR Master Programs & Web Sources & ESG — semua role / public browsing
 	apiV1.Get("/stats", jwtGuard, middleware.RequireRole("SUPERADMIN"), adminHandler.GetAnalytics)
 	apiV1.Get("/companies", ipLimit, companyHandler.ListCompanies)
-	apiV1.Post("/companies", jwtGuard, middleware.RequireRole("CORP_ADMIN", "CSR_MANAGER", "SUPERADMIN"), companyHandler.CreateCompany)
+	apiV1.Post("/companies", jwtGuard, middleware.RequireRole("CORP_ADMIN", "CSR_MANAGER", "SUPERADMIN", "ORG_ADMIN"), companyHandler.CreateCompany)
 	apiV1.Get("/companies/csr-programs", ipLimit, middleware.RequireVisibilityAccess(cfg.JWTSecret), companyHandler.ListCSRPrograms)
 	apiV1.Get("/csr-programs", ipLimit, middleware.RequireVisibilityAccess(cfg.JWTSecret), companyHandler.ListCSRPrograms)
-	apiV1.Patch("/companies/csr-programs/:id/visibility", jwtGuard, middleware.RequireRole("CORP_ADMIN", "CSR_MANAGER", "SUPERADMIN"), companyHandler.UpdateCSRProgramVisibility)
+	apiV1.Patch("/companies/csr-programs/:id/visibility", jwtGuard, middleware.RequireRole("CORP_ADMIN", "CSR_MANAGER", "SUPERADMIN", "ORG_ADMIN"), companyHandler.UpdateCSRProgramVisibility)
 	apiV1.Get("/sources", jwtGuard, adminHandler.ListSources)
-	apiV1.Post("/sources", jwtGuard, middleware.RequireRole("SUPERADMIN"), adminHandler.CreateScrapingJob)
+	apiV1.Post("/sources", jwtGuard, middleware.RequireRole("SUPERADMIN", "ORG_ADMIN"), adminHandler.CreateScrapingJob)
 	apiV1.Get("/documents", jwtGuard, adminHandler.ListDocuments)
 	apiV1.Get("/scraping-jobs", jwtGuard, adminHandler.ListScrapingJobs)
-	apiV1.Post("/scraping-jobs", jwtGuard, middleware.RequireRole("SUPERADMIN"), adminHandler.CreateScrapingJob)
+	apiV1.Post("/scraping-jobs", jwtGuard, middleware.RequireRole("SUPERADMIN", "ORG_ADMIN"), adminHandler.CreateScrapingJob)
 	apiV1.Get("/esg-intelligence", jwtGuard, adminHandler.GetESGIntelligence)
 
 	// Key Person & Social Signals (must be placed before /companies/:id)
 	apiV1.Get("/companies/:id/key-persons", jwtGuard, keyPersonHandler.ListKeyPersons)
-	apiV1.Post("/companies/:id/key-persons", jwtGuard, middleware.RequireRole("CORP_ADMIN", "CSR_MANAGER", "SUPERADMIN"), keyPersonHandler.CreateKeyPerson)
+	apiV1.Post("/companies/:id/key-persons", jwtGuard, middleware.RequireRole("CORP_ADMIN", "CSR_MANAGER", "SUPERADMIN", "ORG_ADMIN"), keyPersonHandler.CreateKeyPerson)
 	apiV1.Get("/companies/:id/key-person-signals", jwtGuard, keyPersonHandler.ListSocialSignals)
-	apiV1.Post("/companies/:id/key-person-signals", jwtGuard, middleware.RequireRole("CORP_ADMIN", "CSR_MANAGER", "SUPERADMIN"), keyPersonHandler.IngestSocialSignal)
-	apiV1.Put("/key-persons/:id", jwtGuard, middleware.RequireRole("CORP_ADMIN", "CSR_MANAGER", "SUPERADMIN"), keyPersonHandler.UpdateKeyPerson)
-	apiV1.Delete("/key-persons/:id", jwtGuard, middleware.RequireRole("CORP_ADMIN", "CSR_MANAGER", "SUPERADMIN"), keyPersonHandler.DeleteKeyPerson)
+	apiV1.Post("/companies/:id/key-person-signals", jwtGuard, middleware.RequireRole("CORP_ADMIN", "CSR_MANAGER", "SUPERADMIN", "ORG_ADMIN"), keyPersonHandler.IngestSocialSignal)
+	apiV1.Put("/key-persons/:id", jwtGuard, middleware.RequireRole("CORP_ADMIN", "CSR_MANAGER", "SUPERADMIN", "ORG_ADMIN"), keyPersonHandler.UpdateKeyPerson)
+	apiV1.Delete("/key-persons/:id", jwtGuard, middleware.RequireRole("CORP_ADMIN", "CSR_MANAGER", "SUPERADMIN", "ORG_ADMIN"), keyPersonHandler.DeleteKeyPerson)
 
 	apiV1.Get("/companies/:id", companyHandler.GetCompany)
-	apiV1.Put("/companies/:id", jwtGuard, middleware.RequireRole("CORP_ADMIN", "CSR_MANAGER", "SUPERADMIN"), companyHandler.UpdateCompany)
-	apiV1.Patch("/companies/:id", jwtGuard, middleware.RequireRole("CORP_ADMIN", "CSR_MANAGER", "SUPERADMIN"), companyHandler.UpdateCompany)
+	apiV1.Put("/companies/:id", jwtGuard, middleware.RequireRole("CORP_ADMIN", "CSR_MANAGER", "SUPERADMIN", "ORG_ADMIN"), companyHandler.UpdateCompany)
+	apiV1.Patch("/companies/:id", jwtGuard, middleware.RequireRole("CORP_ADMIN", "CSR_MANAGER", "SUPERADMIN", "ORG_ADMIN"), companyHandler.UpdateCompany)
 
 	apiV1.Post("/url/verify-linkedin", jwtGuard, urlVerifierHandler.VerifyLinkedInURL)
 	apiV1.Get("/url/verify-linkedin", urlVerifierHandler.VerifyLinkedInURL)
@@ -373,12 +393,21 @@ func main() {
 	intelligenceGroup.Get("/trends", intelligenceHandler.GetTrends)
 	intelligenceGroup.Post("/saved", intelligenceHandler.SaveItem)
 
-	// Institution Programs — GET: semua role | POST: ORG_ADMIN & DIRECTOR only
+	// Institution Programs — GET: semua role | POST, PUT, DELETE: ORG_ADMIN & DIRECTOR only
 	apiV1.Get("/programs", jwtGuard, tenantGeneralLimit, programHandler.ListPrograms)
 	apiV1.Post("/programs", jwtGuard, tenantGeneralLimit,
 		middleware.RequireRole("ORG_ADMIN", "DIRECTOR"),
 		programHandler.CreateProgram,
 	)
+	apiV1.Put("/programs/:id", jwtGuard, tenantGeneralLimit,
+		middleware.RequireRole("ORG_ADMIN", "DIRECTOR"),
+		programHandler.UpdateProgram,
+	)
+	apiV1.Delete("/programs/:id", jwtGuard, tenantGeneralLimit,
+		middleware.RequireRole("ORG_ADMIN", "DIRECTOR"),
+		programHandler.DeleteProgram,
+	)
+
 
 	// Deal Pipeline & Proposal Studio — semua role (ownership filter via org_id RLS & AI Rate Limiting)
 	apiV1.Get("/deals", jwtGuard, tenantGeneralLimit, dealHandler.ListDeals)
@@ -419,14 +448,11 @@ func main() {
 }
 
 func getCORSOrigins(cfg *config.Config) string {
-	if cfg.Environment == "development" {
-		return "*"
-	}
 	origins := getEnv("CORS_ALLOWED_ORIGINS", "")
-	if origins == "" {
-		return "https://sovera.id,https://app.sovera.id"
+	if origins != "" {
+		return origins
 	}
-	return origins
+	return "*"
 }
 
 func getEnv(key, fallback string) string {

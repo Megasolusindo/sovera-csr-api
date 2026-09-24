@@ -93,33 +93,44 @@ func (w *CompanyLinkedInWorker) HandleCompanyLinkedInBatchCheck(ctx context.Cont
 			res := w.verifier.ValidateLinkedInURL(ctx, tgt.LinkedInURL)
 			totalChecked++
 
-			status := "INVALID"
-			lastErr := ""
+			var status string
+			var lastErr string
+
 			if res.IsValid {
 				status = "VALID"
 				totalValid++
+				_, err := w.dbPool.Exec(ctx, `
+					UPDATE company.companies
+					SET linkedin_status = 'VALID',
+						linkedin_verified_at = NOW(),
+						linkedin_last_error = NULL,
+						updated_at = NOW()
+					WHERE id::text = $1
+				`, tgt.ID)
+				if err != nil {
+					log.Printf("[CompanyLinkedInWorker] Error updating status for %s (%s): %v", tgt.Name, tgt.ID, err)
+				}
 			} else {
 				status = "INVALID"
 				lastErr = res.Reason
 				totalInvalid++
+				_, err := w.dbPool.Exec(ctx, `
+					UPDATE company.companies
+					SET linkedin_url = NULL,
+						linkedin_status = NULL,
+						linkedin_verified_at = NOW(),
+						linkedin_last_error = $1,
+						updated_at = NOW()
+					WHERE id::text = $2
+				`, lastErr, tgt.ID)
+				if err != nil {
+					log.Printf("[CompanyLinkedInWorker] Error clearing invalid URL for %s (%s): %v", tgt.Name, tgt.ID, err)
+				}
 			}
 
-			_, err := w.dbPool.Exec(ctx, `
-				UPDATE companies
-				SET linkedin_status = $1,
-					linkedin_verified_at = NOW(),
-					linkedin_last_error = $2,
-					updated_at = NOW()
-				WHERE id::text = $3
-			`, status, lastErr, tgt.ID)
-
-			if err != nil {
-				log.Printf("[CompanyLinkedInWorker] Error updating status for %s (%s): %v", tgt.Name, tgt.ID, err)
-			} else {
-				if totalChecked%10 == 0 || !res.IsValid {
-					log.Printf("[CompanyLinkedInWorker] [%d] %s (%s) => %s | Reason: %s",
-						totalChecked, tgt.Name, tgt.LinkedInURL, status, res.Reason)
-				}
+			if totalChecked%10 == 0 || !res.IsValid {
+				log.Printf("[CompanyLinkedInWorker] [%d] %s (%s) => %s | Reason: %s",
+					totalChecked, tgt.Name, tgt.LinkedInURL, status, res.Reason)
 			}
 		}
 	}

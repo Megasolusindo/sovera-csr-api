@@ -2,9 +2,18 @@ FROM node:20-alpine
 
 WORKDIR /app
 
+# Install Python3, pip, build dependencies for psycopg2 and cloudscraper
+RUN apk add --no-cache python3 py3-pip build-base python3-dev postgresql-dev
+
+# Install python libraries for live IDX scraper
+RUN pip3 install --no-cache-dir --break-system-packages cloudscraper psycopg2-binary
+
 COPY openclaw/package.json ./
 RUN npm install --omit=dev
 
+# Copy scripts directory to root /scripts and /app/scripts
+COPY scripts/ /scripts/
+COPY scripts/ /app/scripts/
 COPY openclaw/ ./
 
 CMD ["node", "scheduler.js"]

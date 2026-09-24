@@ -226,6 +226,9 @@ func (h *WebhookHandler) HandleCrawlerWebhook(c *fiber.Ctx) error {
 	bestContent := h.normalizer.SelectBestContent(payload.RawText, payload.MarkdownContent)
 	contentHash := h.normalizer.GenerateContentHash(bestContent)
 
+	log.Printf("[Webhook Received] TaskID: %s | SourceType: %s | URL: %s | Content: %q | Hash: %s", payload.TaskID, payload.SourceType, payload.SourceURL, bestContent, contentHash)
+
+
 	jobID := "job_ingest_" + uuid.New().String()[:8]
 
 	// Update crawling_logs for completed task

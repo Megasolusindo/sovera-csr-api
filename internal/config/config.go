@@ -72,7 +72,7 @@ func LoadConfig() *Config {
 		FaspayMerchantKey:    getEnv("FASPAY_MERCHANT_KEY", ""),
 		FaspayIsProduction:   getEnv("FASPAY_IS_PRODUCTION", "false") == "true",
 		FaspayReturnURL:      getEnv("FASPAY_RETURN_URL", "https://sovera.id/settings/billing"),
-		OpenClawAgentToken:   getEnv("OPENCLAW_AGENT_TOKEN", ""),
+		OpenClawAgentToken:   getEnv("OPENCLAW_AGENT_TOKEN", "openclaw_agent_secret_token_2026"),
 	}
 }
 

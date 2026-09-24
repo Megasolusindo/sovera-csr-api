@@ -16,6 +16,7 @@ type CompanyCSRProgram struct {
 	ImpactSummary *string    `json:"impact_summary,omitempty"`
 	CreatedAt     time.Time  `json:"created_at"`
 	UpdatedAt     time.Time  `json:"updated_at"`
+	Visibility    string     `json:"visibility"`
 
 	Focuses []CSRFocus `json:"focuses,omitempty"`
 }

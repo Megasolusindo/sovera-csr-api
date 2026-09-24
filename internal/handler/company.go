@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 
@@ -66,12 +67,19 @@ func (h *CompanyHandler) ListCompanies(c *fiber.Ctx) error {
 	})
 }
 
-// ListCSRPrograms returns a paginated list of all corporate CSR programs.
+// ListCSRPrograms returns a paginated list of corporate CSR programs.
+// Visibility filter:
+//   - empty/default: returns public + curated (explore catalog)
+//   - "public": only public programs
+//   - "curated": only curated programs
+//   - "private": only private programs owned by the authenticated organization
+//   - "ALL": bypass visibility filter, superadmin only
 func (h *CompanyHandler) ListCSRPrograms(c *fiber.Ctx) error {
 	limit, _ := strconv.Atoi(c.Query("limit", "20"))
 	offset, _ := strconv.Atoi(c.Query("offset", "0"))
 	search := c.Query("search", "")
 	programType := c.Query("pillar", "")
+	visibility := c.Query("visibility", "")
 
 	if h.programRepo == nil {
 		return c.Status(fiber.StatusOK).JSON(fiber.Map{
@@ -84,7 +92,37 @@ func (h *CompanyHandler) ListCSRPrograms(c *fiber.Ctx) error {
 		})
 	}
 
-	programs, total, err := h.programRepo.ListAllPrograms(c.Context(), limit, offset, search, programType)
+	role, _ := c.Locals("role").(string)
+	orgID, _ := c.Locals("org_id").(string)
+	authorizedOrgID := orgID
+	if strings.EqualFold(role, "SUPERADMIN") {
+		authorizedOrgID = ""
+	}
+
+	if strings.EqualFold(strings.TrimSpace(visibility), "ALL") && !strings.EqualFold(role, "SUPERADMIN") {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
+			"success": false,
+			"error":   "INSUFFICIENT_PERMISSIONS",
+			"message": "Visibility bypass hanya tersedia untuk superadmin",
+		})
+	}
+
+	containsPrivate := false
+	for _, value := range strings.Split(visibility, ",") {
+		if strings.EqualFold(strings.TrimSpace(value), "private") {
+			containsPrivate = true
+			break
+		}
+	}
+	if containsPrivate && orgID == "" {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
+			"success": false,
+			"error":   "AUTH_REQUIRED",
+			"message": "Program private memerlukan autentikasi dan kepemilikan organisasi",
+		})
+	}
+
+	programs, total, err := h.programRepo.ListAllPrograms(c.Context(), limit, offset, search, programType, visibility, authorizedOrgID)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"success": false,
@@ -100,6 +138,82 @@ func (h *CompanyHandler) ListCSRPrograms(c *fiber.Ctx) error {
 			"limit":  limit,
 			"offset": offset,
 		},
+	})
+}
+
+// UpdateCSRProgramVisibility handles PATCH /api/v1/companies/csr-programs/:id/visibility.
+// Only CORP_ADMIN, CSR_MANAGER, or SUPERADMIN can change visibility.
+// Non-superadmin changes are restricted to programs owned by their verified corporate organization.
+func (h *CompanyHandler) UpdateCSRProgramVisibility(c *fiber.Ctx) error {
+	id := c.Params("id")
+	if strings.TrimSpace(id) == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"success": false,
+			"error":   "MISSING_ID",
+			"message": "Program ID wajib disertakan",
+		})
+	}
+
+	role, _ := c.Locals("role").(string)
+	orgID, _ := c.Locals("org_id").(string)
+	if !strings.EqualFold(role, "CORP_ADMIN") && !strings.EqualFold(role, "CSR_MANAGER") && !strings.EqualFold(role, "SUPERADMIN") {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
+			"success": false,
+			"error":   "INSUFFICIENT_PERMISSIONS",
+			"message": "Hanya CORP_ADMIN, CSR_MANAGER, atau SUPERADMIN yang dapat mengubah visibility",
+		})
+	}
+
+	if !strings.EqualFold(role, "SUPERADMIN") {
+		canManage, err := h.programRepo.CanManageCSRProgram(c.Context(), id, orgID)
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"success": false,
+				"error":   "OWNERSHIP_CHECK_FAILED",
+				"message": err.Error(),
+			})
+		}
+		if !canManage {
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
+				"success": false,
+				"error":   "INSUFFICIENT_PERMISSIONS",
+				"message": "Anda tidak memiliki wewenang untuk program ini",
+			})
+		}
+	}
+
+	var payload struct {
+		Visibility string `json:"visibility"`
+	}
+	if err := c.BodyParser(&payload); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"success": false,
+			"error":   "INVALID_BODY",
+			"message": err.Error(),
+		})
+	}
+
+	visibility := strings.ToLower(strings.TrimSpace(payload.Visibility))
+	if visibility != "public" && visibility != "curated" && visibility != "private" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"success": false,
+			"error":   "INVALID_VISIBILITY",
+			"message": "visibility harus salah satu dari: public, curated, private",
+		})
+	}
+
+	updated, err := h.programRepo.UpdateVisibility(c.Context(), id, visibility)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"success": false,
+			"error":   "UPDATE_FAILED",
+			"message": err.Error(),
+		})
+	}
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{
+		"success": true,
+		"data":    updated,
 	})
 }
 
@@ -499,6 +613,9 @@ func (h *CompanyHandler) TriggerBatchInstagramVerification(c *fiber.Ctx) error {
 // TriggerBatchLinkedInDiscovery handles POST /api/v1/url/discover-linkedin-batch
 func (h *CompanyHandler) TriggerBatchLinkedInDiscovery(c *fiber.Ctx) error {
 	serperKey := c.Query("serper_key", "")
+	if serperKey == "" {
+		serperKey = os.Getenv("SERPER_API_KEY")
+	}
 	worker := queue.NewCompanyLinkedInDiscoveryWorker(h.repo.GetDBPool(), serperKey)
 	go func() {
 		_ = worker.HandleCompanyLinkedInDiscoveryBatch(context.Background(), nil)
@@ -513,6 +630,9 @@ func (h *CompanyHandler) TriggerBatchLinkedInDiscovery(c *fiber.Ctx) error {
 // TriggerBatchInstagramDiscovery handles POST /api/v1/url/discover-instagram-batch
 func (h *CompanyHandler) TriggerBatchInstagramDiscovery(c *fiber.Ctx) error {
 	serperKey := c.Query("serper_key", "")
+	if serperKey == "" {
+		serperKey = os.Getenv("SERPER_API_KEY")
+	}
 	worker := queue.NewCompanyInstagramDiscoveryWorker(h.repo.GetDBPool(), serperKey)
 	go func() {
 		_ = worker.HandleCompanyInstagramDiscoveryBatch(context.Background(), nil)

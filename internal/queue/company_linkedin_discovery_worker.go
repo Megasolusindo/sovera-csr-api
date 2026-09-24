@@ -4,11 +4,14 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
+	"net/url"
+	"os"
 	"regexp"
 	"strings"
 	"time"
@@ -36,6 +39,9 @@ type CompanyLinkedInDiscoveryWorker struct {
 }
 
 func NewCompanyLinkedInDiscoveryWorker(dbPool *pgxpool.Pool, serperAPIKey string) *CompanyLinkedInDiscoveryWorker {
+	if serperAPIKey == "" {
+		serperAPIKey = os.Getenv("SERPER_API_KEY")
+	}
 	tr := &http.Transport{
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
 	}
@@ -59,6 +65,8 @@ func NewCompanyLinkedInDiscoveryWorker(dbPool *pgxpool.Pool, serperAPIKey string
 func NewCompanyLinkedInDiscoveryBatchTask() (*asynq.Task, error) {
 	return asynq.NewTask(TypeCompanyLinkedInDiscoveryBatch, []byte("{}"), asynq.Queue(QueueCompanyLinkedInDiscoveryBatch), asynq.MaxRetry(1)), nil
 }
+
+type CompanyLinkedInDiscoveryBatchTask struct{}
 
 type DiscoveryTarget struct {
 	ID          string
@@ -92,14 +100,18 @@ func (w *CompanyLinkedInDiscoveryWorker) HandleCompanyLinkedInDiscoveryBatch(ctx
 		rows, err := w.dbPool.Query(ctx, `
 			SELECT id::text, name, COALESCE(website, ''), COALESCE(linkedin_url, ''), COALESCE(linkedin_status, 'UNVERIFIED')
 			FROM companies
-			WHERE linkedin_status = 'INVALID' 
+			WHERE (linkedin_status = 'INVALID' 
 			   OR (linkedin_url IS NULL OR linkedin_url = '') 
-			   OR linkedin_status = 'UNVERIFIED'
+			   OR linkedin_status = 'UNVERIFIED')
+			  AND (linkedin_verified_at IS NULL OR linkedin_verified_at < NOW() - INTERVAL '1 hour')
 			ORDER BY 
-			  (CASE WHEN linkedin_status = 'INVALID' THEN 0 ELSE 1 END) ASC,
+			  (CASE WHEN name LIKE '%Tbk%' THEN 0 ELSE 1 END) ASC,
+			  (CASE WHEN website LIKE 'http%' THEN 0 ELSE 1 END) ASC,
 			  (CASE WHEN linkedin_verified_at IS NULL THEN 0 ELSE 1 END) ASC,
+			  linkedin_verified_at ASC,
 			  created_at ASC
 			LIMIT 50;
+
 		`)
 		if err != nil {
 			return fmt.Errorf("failed to query companies for LinkedIn discovery: %w", err)
@@ -145,7 +157,7 @@ func (w *CompanyLinkedInDiscoveryWorker) HandleCompanyLinkedInDiscoveryBatch(ctx
 							linkedin_verified_at = NOW(),
 							linkedin_last_error = '',
 							updated_at = NOW()
-						WHERE id::text = $2
+						WHERE id = $2::uuid
 					`, res.CanonicalURL, tgt.ID)
 
 					if updateErr != nil {
@@ -170,7 +182,7 @@ func (w *CompanyLinkedInDiscoveryWorker) HandleCompanyLinkedInDiscoveryBatch(ctx
 				SET linkedin_verified_at = NOW(),
 					linkedin_last_error = $1,
 					updated_at = NOW()
-				WHERE id::text = $2
+				WHERE id = $2::uuid
 			`, lastErr, tgt.ID)
 
 			log.Printf("[CompanyLinkedInDiscoveryWorker] [NOT FOUND] [%s] %s -> No valid LinkedIn URL discovered", tgt.ID, tgt.Name)
@@ -213,33 +225,119 @@ func (w *CompanyLinkedInDiscoveryWorker) DiscoverLinkedInForCompany(ctx context.
 
 	// Method 2: Empirical Serper API Search
 	if w.serperAPIKey != "" {
-		query := fmt.Sprintf("site:linkedin.com/company %q", target.Name)
-		serperURL := "https://google.serper.dev/search"
+		cleanName := strings.TrimSpace(target.Name)
+		cleanName = regexp.MustCompile(`(?i)\b(PT|CV|Tbk|Persero)\b`).ReplaceAllString(cleanName, "")
+		cleanName = strings.TrimSpace(regexp.MustCompile(`\s+`).ReplaceAllString(cleanName, " "))
 
-		reqBody, _ := json.Marshal(map[string]interface{}{
-			"q":   query,
-			"num": 5,
-		})
+		queries := []string{
+			fmt.Sprintf("site:linkedin.com/company %q", target.Name),
+			fmt.Sprintf("site:linkedin.com/company %s", cleanName),
+			fmt.Sprintf("site:linkedin.com/company %s", target.Name),
+		}
 
-		req, err := http.NewRequestWithContext(ctx, "POST", serperURL, bytes.NewBuffer(reqBody))
+		for _, query := range queries {
+			serperURL := "https://google.serper.dev/search"
+			reqBody, _ := json.Marshal(map[string]interface{}{
+				"q":   query,
+				"num": 5,
+			})
+
+			req, err := http.NewRequestWithContext(ctx, "POST", serperURL, bytes.NewBuffer(reqBody))
+			if err == nil {
+				req.Header.Set("X-API-KEY", w.serperAPIKey)
+				req.Header.Set("Content-Type", "application/json")
+
+				resp, err := w.httpClient.Do(req)
+				if err == nil {
+					defer resp.Body.Close()
+					if resp.StatusCode == http.StatusOK {
+						var serperRes SerperResponse
+						if err := json.NewDecoder(resp.Body).Decode(&serperRes); err == nil {
+							for _, item := range serperRes.Organic {
+								matches := linkedinURLFinderRegex.FindAllString(item.Link+" "+item.Snippet, -1)
+								for _, candidate := range matches {
+									res := w.verifier.ValidateLinkedInURL(ctx, candidate)
+									if res.IsValid {
+										return res.CanonicalURL, "SERPER_GOOGLE_SEARCH", nil
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+
+	// Method 3: Free Google News RSS Search (Zero API Key / Zero Cost Fallback)
+	cleanName := strings.TrimSpace(target.Name)
+	cleanName = regexp.MustCompile(`(?i)\b(PT|CV|Tbk|Persero|Perseroda)\b`).ReplaceAllString(cleanName, "")
+	cleanName = strings.TrimSpace(regexp.MustCompile(`\s+`).ReplaceAllString(cleanName, " "))
+
+	if cleanName != "" {
+		rssURL := fmt.Sprintf("https://news.google.com/rss/search?q=site:linkedin.com/company+%%22%s%%22&hl=id&gl=ID&ceid=ID:id", url.QueryEscape(cleanName))
+		req, err := http.NewRequestWithContext(ctx, "GET", rssURL, nil)
 		if err == nil {
-			req.Header.Set("X-API-KEY", w.serperAPIKey)
-			req.Header.Set("Content-Type", "application/json")
-
+			req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36")
 			resp, err := w.httpClient.Do(req)
 			if err == nil {
 				defer resp.Body.Close()
 				if resp.StatusCode == http.StatusOK {
-					var serperRes SerperResponse
-					if err := json.NewDecoder(resp.Body).Decode(&serperRes); err == nil {
-						for _, item := range serperRes.Organic {
-							// Check item link
-							matches := linkedinURLFinderRegex.FindAllString(item.Link+" "+item.Snippet, -1)
-							for _, candidate := range matches {
-								res := w.verifier.ValidateLinkedInURL(ctx, candidate)
-								if res.IsValid {
-									return res.CanonicalURL, "SERPER_GOOGLE_SEARCH", nil
-								}
+					bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 1024*1024))
+					rawXML := string(bodyBytes)
+
+					matches := linkedinURLFinderRegex.FindAllString(rawXML, -1)
+
+					// Decode base64 URL tokens in Google RSS article links
+					b64Regex := regexp.MustCompile(`articles/([a-zA-Z0-9_-]+)`)
+					b64Matches := b64Regex.FindAllStringSubmatch(rawXML, -1)
+					for _, m := range b64Matches {
+						if len(m) > 1 {
+							dec, decErr := base64.RawURLEncoding.DecodeString(m[1])
+							if decErr == nil {
+								matches = append(matches, linkedinURLFinderRegex.FindAllString(string(dec), -1)...)
+							}
+							decStd, decStdErr := base64.StdEncoding.DecodeString(m[1])
+							if decStdErr == nil {
+								matches = append(matches, linkedinURLFinderRegex.FindAllString(string(decStd), -1)...)
+							}
+						}
+					}
+
+					for _, candidate := range matches {
+						res := w.verifier.ValidateLinkedInURL(ctx, candidate)
+						if res.IsValid {
+							return res.CanonicalURL, "FREE_GOOGLE_NEWS_RSS", nil
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// Method 4: Free Bing RSS Search (Zero API Key / Zero Cost Fallback)
+	if cleanName != "" {
+		bingQueries := []string{
+			fmt.Sprintf("site:linkedin.com/company %s", cleanName),
+			fmt.Sprintf("site:linkedin.com/company %q", target.Name),
+			fmt.Sprintf("site:linkedin.com/company %s", target.Name),
+		}
+		for _, bq := range bingQueries {
+			bingRSSURL := fmt.Sprintf("https://www.bing.com/search?format=rss&q=%s", url.QueryEscape(bq))
+			req, err := http.NewRequestWithContext(ctx, "GET", bingRSSURL, nil)
+			if err == nil {
+				req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36")
+				resp, err := w.httpClient.Do(req)
+				if err == nil {
+					defer resp.Body.Close()
+					if resp.StatusCode == http.StatusOK {
+						bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 512*1024))
+						matches := linkedinURLFinderRegex.FindAllString(string(bodyBytes), -1)
+						for _, candidate := range matches {
+							res := w.verifier.ValidateLinkedInURL(ctx, candidate)
+							if res.IsValid {
+								return res.CanonicalURL, "FREE_BING_RSS", nil
 							}
 						}
 					}
@@ -250,3 +348,4 @@ func (w *CompanyLinkedInDiscoveryWorker) DiscoverLinkedInForCompany(ctx context.
 
 	return "", "", nil
 }
+

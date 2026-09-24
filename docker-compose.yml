@@ -1,24 +1,6 @@
 version: '3.8'
 
 services:
-  postgres:
-    image: pgvector/pgvector:pg16
-    container_name: sovera_postgres
-    restart: always
-    environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: sovera_db
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-
   redis:
     image: redis:7-alpine
     container_name: sovera_redis
@@ -44,30 +26,8 @@ services:
     env_file:
       - .env
     environment:
-      - PORT=4000
-      - NODE_ENV=development
-      - DATABASE_URL=${DATABASE_URL:-postgres://postgres:ResulteW212%23@10.10.29.177:5432/sovera?sslmode=disable}
       - REDIS_URL=redis:6379
-      - WEBHOOK_SECRET_KEY=super_secret_crawler_key_123
-      - JWT_SECRET=super_secret_jwt_key_enterprise
-      - AI_API_KEY=${AI_API_KEY}
-      - SCRAPER_SERVICE_URL=${SCRAPER_SERVICE_URL:-https://api-scraper.megasolusindo.com/api/v1/scrape-tasks}
-      - SCRAPER_API_KEY=${SCRAPER_API_KEY:-change-me}
-      - WEBHOOK_URL=${WEBHOOK_URL:-http://host.docker.internal:4000/api/v1/webhooks/crawler?secret=super_secret_crawler_key_123}
-      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
-      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
-      - ACTIVE_PAYMENT_GATEWAY=${ACTIVE_PAYMENT_GATEWAY:-faspay}
-      - MIDTRANS_SERVER_KEY=${MIDTRANS_SERVER_KEY}
-      - MIDTRANS_CLIENT_KEY=${MIDTRANS_CLIENT_KEY}
-      - MIDTRANS_MERCHANT_ID=${MIDTRANS_MERCHANT_ID}
-      - MIDTRANS_IS_PRODUCTION=${MIDTRANS_IS_PRODUCTION}
-      - FASPAY_MERCHANT_ID=${FASPAY_MERCHANT_ID}
-      - FASPAY_MERCHANT_KEY=${FASPAY_MERCHANT_KEY}
-      - FASPAY_IS_PRODUCTION=${FASPAY_IS_PRODUCTION}
-      - FASPAY_RETURN_URL=${FASPAY_RETURN_URL}
     depends_on:
-      postgres:
-        condition: service_healthy
       redis:
         condition: service_healthy
 
@@ -77,21 +37,11 @@ services:
       dockerfile: Dockerfile.worker
     container_name: sovera_core_worker
     restart: always
+    env_file:
+      - .env
     environment:
-      - NODE_ENV=development
-      - DATABASE_URL=${DATABASE_URL:-postgres://postgres:ResulteW212%23@10.10.29.177:5432/sovera?sslmode=disable}
       - REDIS_URL=redis:6379
-      - WEBHOOK_SECRET_KEY=super_secret_crawler_key_123
-      - JWT_SECRET=super_secret_jwt_key_enterprise
-      - AI_API_KEY=${AI_API_KEY}
-      - SCRAPER_SERVICE_URL=${SCRAPER_SERVICE_URL:-https://api-scraper.megasolusindo.com/api/v1/scrape-tasks}
-      - SCRAPER_API_KEY=${SCRAPER_API_KEY:-change-me}
-      - WEBHOOK_URL=${WEBHOOK_URL:-http://host.docker.internal:4000/api/v1/webhooks/crawler?secret=super_secret_crawler_key_123}
-      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
-      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
     depends_on:
-      postgres:
-        condition: service_healthy
       redis:
         condition: service_healthy
 
@@ -99,18 +49,14 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.openclaw
-    container_name: sovera_openclaw_agent
+    container_name: sovera_openclaw
     restart: always
+    env_file:
+      - .env
     environment:
-      - CSR_API_BASE_URL=http://api:4000/api/v1/ai
-      - OPENCLAW_AGENT_TOKEN=${OPENCLAW_AGENT_TOKEN:-openclaw_agent_live_key_998877665544}
-      - SERPER_API_KEY=${SERPER_API_KEY}
-      - AI_API_KEY=${AI_API_KEY}
-      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-8850608348:AAHXkUz7nldwf2WR9dmMm5NI9Yox-WWC2Gw}
-      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID:-87116487}
+      - REDIS_URL=redis:6379
     depends_on:
       - api
 
 volumes:
-  postgres_data:
   redis_data:

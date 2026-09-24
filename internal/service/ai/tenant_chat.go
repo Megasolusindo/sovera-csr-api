@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -174,8 +175,47 @@ ATURAN WAJIB SUMBER DATA & FORMAT HUMANIS:
 	// 5. Execute Gemini LLM call with function calling loop
 	replyText, executedTools, err := s.callGeminiWithTools(ctx, systemPrompt, contents, toolsDeclaration, orgID)
 	if err != nil {
-		// Fallback graceful degradation response if LLM API fails
-		replyText = "Mohon maaf, terjadi hambatan pada koneksi layanan AI. Silakan coba kembali beberapa saat lagi."
+		log.Printf("[TenantChatService] Gemini LLM Call failed (%v). Executing Smart DB Fallback...", err)
+
+		// Smart Fallback: Search DB for verified signals and companies matching user query
+		queryKw := strings.TrimSpace(message)
+		signals, errSig := s.repo.SearchSignalsByOrg(ctx, orgID, queryKw)
+		companies, errComp := s.repo.SearchCompaniesPublic(ctx, queryKw)
+
+		var sb strings.Builder
+		hasData := false
+
+		if errSig == nil && len(signals) > 0 {
+			hasData = true
+			sb.WriteString(fmt.Sprintf("Layanan analisis AI sedang dalam pemulihan kuota, namun berikut adalah **%d Sinyal CSR Terverifikasi** langsung dari database untuk kata kunci '%s':\n\n", len(signals), queryKw))
+			for i, sig := range signals {
+				sb.WriteString(fmt.Sprintf("%d. **%s** (%s) - *%s*\n   Ringkasan: %s\n   [🔍 Lihat Detail](/corporates?search=%s)\n\n",
+					i+1, sig.CompanyName, sig.IndustrySector, sig.SourceType, sig.Summary, sig.CompanyName))
+			}
+		}
+
+		if errComp == nil && len(companies) > 0 {
+			if !hasData {
+				sb.WriteString(fmt.Sprintf("Layanan analisis AI sedang dalam pemulihan kuota, namun berikut adalah **%d Perusahaan Terkait** dari database untuk kata kunci '%s':\n\n", len(companies), queryKw))
+			} else {
+				sb.WriteString(fmt.Sprintf("**Perusahaan Terkait di Database (%d):**\n", len(companies)))
+			}
+			hasData = true
+			for i, comp := range companies {
+				webStr := ""
+				if comp.Website != nil && *comp.Website != "" {
+					webStr = fmt.Sprintf(" | Website: %s", *comp.Website)
+				}
+				sb.WriteString(fmt.Sprintf("%d. **%s** | Sektor: %s%s\n   [🔍 Lihat Detail Perusahaan](/corporates?search=%s)\n\n",
+					i+1, comp.Name, comp.IndustrySector, webStr, comp.Name))
+			}
+		}
+
+		if !hasData {
+			replyText = "Mohon maaf, layanan analisis LLM interaktif sedang mencapai batas kuota harian (HTTP 429 Rate Limit). Silakan coba kembali beberapa saat lagi atau cari langsung melalui menu Direktori Perusahaan."
+		} else {
+			replyText = sb.String()
+		}
 	}
 
 	latency := int(time.Since(startTime).Milliseconds())

@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"time"
 
 	"sovera-core-api/internal/model"
@@ -167,7 +168,7 @@ func (r *CrawlerRepository) CreateLog(ctx context.Context, log model.CrawlingLog
 	query := `
 		INSERT INTO crawling_logs (target_id, task_id, status, http_status_code, error_message, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
-		ON CONFLICT (task_id) DO UPDATE 
+		ON CONFLICT (task_id, created_at) DO UPDATE
 		SET status = EXCLUDED.status, updated_at = NOW();
 	`
 	_, err := r.pool.Exec(ctx, query, log.TargetID, log.TaskID, log.Status, log.HTTPStatusCode, log.ErrorMessage)
@@ -254,29 +255,28 @@ func (r *CrawlerRepository) ListSources(ctx context.Context, limit, offset int, 
 	argIdx := 1
 
 	if search != "" {
-		whereClause += fmt.Sprintf(" AND (t.source_name ILIKE $%d OR t.target_url ILIKE $%d OR c.name ILIKE $%d)", argIdx, argIdx, argIdx)
+		whereClause += " AND (t.source_name ILIKE $" + strconv.Itoa(argIdx) + " OR t.target_url ILIKE $" + strconv.Itoa(argIdx) + " OR c.name ILIKE $" + strconv.Itoa(argIdx) + ")"
 		args = append(args, "%"+search+"%")
 		argIdx++
 	}
 
 	if sourceType != "" {
-		whereClause += fmt.Sprintf(" AND t.source_type ILIKE $%d", argIdx)
+		whereClause += " AND t.source_type ILIKE $" + strconv.Itoa(argIdx)
 		args = append(args, "%"+sourceType+"%")
 		argIdx++
 	}
 
 	if healthStatus != "" {
-		whereClause += fmt.Sprintf(" AND t.health_status ILIKE $%d", argIdx)
+		whereClause += " AND t.health_status ILIKE $" + strconv.Itoa(argIdx)
 		args = append(args, "%"+healthStatus+"%")
 		argIdx++
 	}
 
-	countQuery := fmt.Sprintf(`
+	countQuery := `
 		SELECT COUNT(*)
 		FROM crawling_targets t
 		LEFT JOIN companies c ON c.id = t.company_id
-		%s;
-	`, whereClause)
+		` + whereClause + `;`
 
 	var total int
 	err := r.pool.QueryRow(ctx, countQuery, args...).Scan(&total)
@@ -284,7 +284,7 @@ func (r *CrawlerRepository) ListSources(ctx context.Context, limit, offset int, 
 		return nil, 0, fmt.Errorf("failed to count crawling_targets: %w", err)
 	}
 
-	query := fmt.Sprintf(`
+	query := `
 		SELECT 
 			t.id::text, t.company_id::text, t.source_name, t.source_type, t.target_url,
 			t.check_interval_hours, t.last_scraped_at::text, t.next_run_at::text,
@@ -293,10 +293,9 @@ func (r *CrawlerRepository) ListSources(ctx context.Context, limit, offset int, 
 			c.name as company_name
 		FROM crawling_targets t
 		LEFT JOIN companies c ON c.id = t.company_id
-		%s
+		` + whereClause + `
 		ORDER BY t.created_at DESC
-		LIMIT $%d OFFSET $%d;
-	`, whereClause, argIdx, argIdx+1)
+		LIMIT $` + strconv.Itoa(argIdx) + ` OFFSET $` + strconv.Itoa(argIdx+1) + `;`
 
 	args = append(args, limit, offset)
 

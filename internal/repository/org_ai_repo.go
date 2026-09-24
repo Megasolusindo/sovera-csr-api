@@ -405,9 +405,9 @@ func (r *OrganizationAIRepository) ListOrganizationPrograms(ctx context.Context,
 			SELECT 
 				id::text, org_id::text, title, COALESCE(description, ''), 
 				COALESCE(primary_cluster, 'COMMUNITY_DEVELOPMENT'), ARRAY_TO_STRING(COALESCE(target_sdgs, '{}'), ','),
-				COALESCE(asnaf_category, ''), COALESCE(esg_pillar, 'SOCIAL'), COALESCE(target_beneficiaries, ''),
+				COALESCE(asnaf_category, ''), COALESCE(esg_pillar, 'SOCIAL'), COALESCE(target_beneficiaries::text, COALESCE(target_beneficiaries_desc, '')),
 				created_at::text
-			FROM institution_programs
+			FROM ngo_managed_programs
 			WHERE org_id = $1
 			ORDER BY created_at DESC;
 		`

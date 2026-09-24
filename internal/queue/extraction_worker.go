@@ -59,8 +59,12 @@ func (w *ExtractionWorker) ProcessExtractionTask(ctx context.Context, task *asyn
 	// 1. LLM Structured Entity Extraction via Gemini
 	extractedSignal, err := w.geminiService.ExtractCorporateSignal(ctx, textToExtract)
 	if err != nil {
+		log.Printf("[Asynq Worker] LLM signal extraction failed for Job [%s]: %v", payload.JobID, err)
 		return fmt.Errorf("LLM signal extraction failed: %w", err)
 	}
+
+	log.Printf("[Asynq Worker] LLM Extracted Signal: Company=%q | Sector=%q | CSRRelevance=%s | Confidence=%.2f | Summary=%q",
+		extractedSignal.CompanyName, extractedSignal.IndustrySector, extractedSignal.CSRRelevance, extractedSignal.ConfidenceScore, extractedSignal.Summary)
 
 	// Log AI token usage to crm.ai_token_logs
 	if w.tokenLogRepo != nil {

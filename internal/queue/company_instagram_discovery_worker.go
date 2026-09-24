@@ -84,12 +84,13 @@ func (w *CompanyInstagramDiscoveryWorker) HandleCompanyInstagramDiscoveryBatch(c
 		rows, err := w.dbPool.Query(ctx, `
 			SELECT id::text, name, COALESCE(website, ''), COALESCE(instagram_url, ''), COALESCE(instagram_status, 'UNVERIFIED')
 			FROM companies
-			WHERE instagram_status = 'INVALID' 
+			WHERE (instagram_status = 'INVALID' 
 			   OR (instagram_url IS NULL OR instagram_url = '') 
-			   OR instagram_status = 'UNVERIFIED'
+			   OR instagram_status = 'UNVERIFIED')
+			  AND (instagram_verified_at IS NULL OR instagram_verified_at < NOW() - INTERVAL '1 hour')
 			ORDER BY 
-			  (CASE WHEN instagram_status = 'INVALID' THEN 0 ELSE 1 END) ASC,
 			  (CASE WHEN instagram_verified_at IS NULL THEN 0 ELSE 1 END) ASC,
+			  instagram_verified_at ASC,
 			  created_at ASC
 			LIMIT 50;
 		`)
@@ -175,27 +176,29 @@ func (w *CompanyInstagramDiscoveryWorker) HandleCompanyInstagramDiscoveryBatch(c
 func (w *CompanyInstagramDiscoveryWorker) DiscoverInstagramForCompany(ctx context.Context, target InstagramDiscoveryTarget) (string, string, error) {
 	// Method 1: Empirical Website HTML Scraping
 	if target.Website != "" {
-		webURL := target.Website
-		if !strings.HasPrefix(webURL, "http://") && !strings.HasPrefix(webURL, "https://") {
-			webURL = "https://" + webURL
+		webURLsToTry := []string{target.Website}
+		if !strings.HasPrefix(target.Website, "http://") && !strings.HasPrefix(target.Website, "https://") {
+			webURLsToTry = []string{"https://" + target.Website, "http://" + target.Website}
 		}
 
-		req, err := http.NewRequestWithContext(ctx, "GET", webURL, nil)
-		if err == nil {
-			req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")
-			req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-
-			resp, err := w.httpClient.Do(req)
+		for _, webURL := range webURLsToTry {
+			req, err := http.NewRequestWithContext(ctx, "GET", webURL, nil)
 			if err == nil {
-				defer resp.Body.Close()
-				if resp.StatusCode >= 200 && resp.StatusCode < 400 {
-					bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 512*1024)) // 512KB max
-					matches := instagramURLFinderRegex.FindAllString(string(bodyBytes), -1)
+				req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")
+				req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
 
-					for _, candidate := range matches {
-						res := w.verifier.ValidateInstagramURL(ctx, candidate)
-						if res.IsValid {
-							return res.CanonicalURL, "OFFICIAL_WEBSITE_HTML", nil
+				resp, err := w.httpClient.Do(req)
+				if err == nil {
+					defer resp.Body.Close()
+					if resp.StatusCode >= 200 && resp.StatusCode < 400 {
+						bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 512*1024)) // 512KB max
+						matches := instagramURLFinderRegex.FindAllString(string(bodyBytes), -1)
+
+						for _, candidate := range matches {
+							res := w.verifier.ValidateInstagramURL(ctx, candidate)
+							if res.IsValid {
+								return res.CanonicalURL, "OFFICIAL_WEBSITE_HTML", nil
+							}
 						}
 					}
 				}
@@ -205,32 +208,41 @@ func (w *CompanyInstagramDiscoveryWorker) DiscoverInstagramForCompany(ctx contex
 
 	// Method 2: Empirical Serper API Search
 	if w.serperAPIKey != "" {
-		query := fmt.Sprintf("site:instagram.com %q", target.Name)
-		serperURL := "https://google.serper.dev/search"
+		cleanName := strings.TrimSpace(target.Name)
+		cleanName = regexp.MustCompile(`(?i)\b(PT|CV|Tbk|Persero)\b`).ReplaceAllString(cleanName, "")
+		cleanName = strings.TrimSpace(regexp.MustCompile(`\s+`).ReplaceAllString(cleanName, " "))
 
-		reqBody, _ := json.Marshal(map[string]interface{}{
-			"q":   query,
-			"num": 5,
-		})
+		queries := []string{
+			fmt.Sprintf("site:instagram.com %q", target.Name),
+			fmt.Sprintf("site:instagram.com %s", cleanName),
+			fmt.Sprintf("site:instagram.com %s", target.Name),
+		}
 
-		req, err := http.NewRequestWithContext(ctx, "POST", serperURL, bytes.NewBuffer(reqBody))
-		if err == nil {
-			req.Header.Set("X-API-KEY", w.serperAPIKey)
-			req.Header.Set("Content-Type", "application/json")
+		for _, query := range queries {
+			serperURL := "https://google.serper.dev/search"
+			reqBody, _ := json.Marshal(map[string]interface{}{
+				"q":   query,
+				"num": 5,
+			})
 
-			resp, err := w.httpClient.Do(req)
+			req, err := http.NewRequestWithContext(ctx, "POST", serperURL, bytes.NewBuffer(reqBody))
 			if err == nil {
-				defer resp.Body.Close()
-				if resp.StatusCode == http.StatusOK {
-					var serperRes SerperResponse
-					if err := json.NewDecoder(resp.Body).Decode(&serperRes); err == nil {
-						for _, item := range serperRes.Organic {
-							// Check item link and snippet
-							matches := instagramURLFinderRegex.FindAllString(item.Link+" "+item.Snippet, -1)
-							for _, candidate := range matches {
-								res := w.verifier.ValidateInstagramURL(ctx, candidate)
-								if res.IsValid {
-									return res.CanonicalURL, "SERPER_GOOGLE_SEARCH", nil
+				req.Header.Set("X-API-KEY", w.serperAPIKey)
+				req.Header.Set("Content-Type", "application/json")
+
+				resp, err := w.httpClient.Do(req)
+				if err == nil {
+					defer resp.Body.Close()
+					if resp.StatusCode == http.StatusOK {
+						var serperRes SerperResponse
+						if err := json.NewDecoder(resp.Body).Decode(&serperRes); err == nil {
+							for _, item := range serperRes.Organic {
+								matches := instagramURLFinderRegex.FindAllString(item.Link+" "+item.Snippet, -1)
+								for _, candidate := range matches {
+									res := w.verifier.ValidateInstagramURL(ctx, candidate)
+									if res.IsValid {
+										return res.CanonicalURL, "SERPER_GOOGLE_SEARCH", nil
+									}
 								}
 							}
 						}

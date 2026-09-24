@@ -28,7 +28,8 @@ func main() {
 		"ALTER TABLE organizations OWNER TO sovera;",
 		"ALTER TABLE company_claims OWNER TO sovera;",
 		"ALTER TABLE csr_opportunities OWNER TO sovera;",
-		"ALTER TABLE ngo_programs OWNER TO sovera;",
+		"ALTER TABLE ngo_managed_programs OWNER TO sovera;",
+		"ALTER TABLE company_enriched_programs OWNER TO sovera;",
 		"ALTER TABLE proposals OWNER TO sovera;",
 		"ALTER TABLE user_invitations OWNER TO sovera;",
 	}

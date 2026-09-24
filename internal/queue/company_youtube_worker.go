@@ -82,29 +82,42 @@ func (w *CompanyYoutubeWorker) HandleCompanyYoutubeBatchCheck(ctx context.Contex
 			res := w.verifier.ValidateYoutubeURL(ctx, tgt.YoutubeURL)
 			totalChecked++
 
-			status := "INVALID"
-			lastErr := ""
+			var status string
+			var lastErr string
+
 			if res.IsValid {
 				status = "VALID"
 				totalValid++
+				_, err := w.dbPool.Exec(ctx, `
+					UPDATE company.companies
+					SET youtube_status = 'VALID',
+						youtube_verified_at = NOW(),
+						youtube_last_error = NULL,
+						updated_at = NOW()
+					WHERE id::text = $1
+				`, tgt.ID)
+				if err != nil {
+					log.Printf("[CompanyYoutubeWorker] Error updating status for %s (%s): %v", tgt.Name, tgt.ID, err)
+				}
 			} else {
 				status = "INVALID"
 				lastErr = res.Reason
 				totalInvalid++
+				_, err := w.dbPool.Exec(ctx, `
+					UPDATE company.companies
+					SET youtube_url = NULL,
+						youtube_status = NULL,
+						youtube_verified_at = NOW(),
+						youtube_last_error = $1,
+						updated_at = NOW()
+					WHERE id::text = $2
+				`, lastErr, tgt.ID)
+				if err != nil {
+					log.Printf("[CompanyYoutubeWorker] Error clearing invalid URL for %s (%s): %v", tgt.Name, tgt.ID, err)
+				}
 			}
 
-			_, err := w.dbPool.Exec(ctx, `
-				UPDATE company.companies
-				SET youtube_status = $1,
-					youtube_verified_at = NOW(),
-					youtube_last_error = $2,
-					updated_at = NOW()
-				WHERE id::text = $3
-			`, status, lastErr, tgt.ID)
-
-			if err != nil {
-				log.Printf("[CompanyYoutubeWorker] Error updating status for %s (%s): %v", tgt.Name, tgt.ID, err)
-			} else if totalChecked%10 == 0 || !res.IsValid {
+			if totalChecked%10 == 0 || !res.IsValid {
 				log.Printf("[CompanyYoutubeWorker] [%d] %s (%s) => %s | Reason: %s",
 					totalChecked, tgt.Name, tgt.ID, status, res.Reason)
 			}

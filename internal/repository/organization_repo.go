@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -47,19 +48,19 @@ func (r *OrganizationRepository) ListOrganizations(ctx context.Context, page, pa
 	argIdx := 1
 
 	if search != "" {
-		baseWhere += fmt.Sprintf(" AND (o.name ILIKE $%d OR o.id::text ILIKE $%d OR COALESCE(o.org_type, '') ILIKE $%d OR COALESCE(o.contact_name, '') ILIKE $%d)", argIdx, argIdx, argIdx, argIdx)
+		baseWhere += " AND (o.name ILIKE $" + strconv.Itoa(argIdx) + " OR o.id::text ILIKE $" + strconv.Itoa(argIdx) + " OR COALESCE(o.org_type, '') ILIKE $" + strconv.Itoa(argIdx) + " OR COALESCE(o.contact_name, '') ILIKE $" + strconv.Itoa(argIdx) + ")"
 		args = append(args, "%"+search+"%")
 		argIdx++
 	}
 
-	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM organizations o %s", baseWhere)
+	countQuery := "SELECT COUNT(*) FROM organizations o " + baseWhere
 	var total int
 	err := r.pool.QueryRow(ctx, countQuery, args...).Scan(&total)
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to count organizations: %w", err)
 	}
 
-	query := fmt.Sprintf(`
+	query := `
 		SELECT 
 			o.id,
 			o.name,
@@ -74,11 +75,10 @@ func (r *OrganizationRepository) ListOrganizations(ctx context.Context, page, pa
 			o.updated_at
 		FROM organizations o
 		LEFT JOIN users u ON u.org_id = o.id
-		%s
+		` + baseWhere + `
 		GROUP BY o.id
 		ORDER BY o.created_at DESC
-		LIMIT $%d OFFSET $%d;
-	`, baseWhere, argIdx, argIdx+1)
+		LIMIT $` + strconv.Itoa(argIdx) + ` OFFSET $` + strconv.Itoa(argIdx+1) + `;`
 
 	args = append(args, pageSize, offset)
 

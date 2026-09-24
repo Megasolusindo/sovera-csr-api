@@ -8,6 +8,7 @@ import (
 	"github.com/hibiken/asynq"
 
 	"sovera-core-api/internal/config"
+	"sovera-core-api/internal/pkg/telegram"
 	"sovera-core-api/internal/queue"
 	"sovera-core-api/internal/repository"
 	"sovera-core-api/internal/service/ai"
@@ -53,8 +54,11 @@ func main() {
 	healthCheckWorker := queue.NewURLHealthCheckWorker(dbPool)
 	companyLinkedInWorker := queue.NewCompanyLinkedInWorker(dbPool)
 	companyInstagramWorker := queue.NewCompanyInstagramWorker(dbPool)
+	telegramNotifier := telegram.NewNotifier(cfg.TelegramBotToken, cfg.TelegramChatID)
+	serperQuotaWorker := queue.NewSerperQuotaWorker(cfg.SerperAPIKey, telegramNotifier)
 	companyLinkedInDiscoveryWorker := queue.NewCompanyLinkedInDiscoveryWorker(dbPool, cfg.SerperAPIKey)
 	companyInstagramDiscoveryWorker := queue.NewCompanyInstagramDiscoveryWorker(dbPool, cfg.SerperAPIKey)
+	companyContactDiscoveryWorker := queue.NewCompanyContactDiscoveryWorker(dbPool, cfg.SerperAPIKey)
 
 	// 3. Asynq Scheduler for Periodic Tasks
 	scheduler := asynq.NewScheduler(
@@ -184,6 +188,27 @@ func main() {
 		}
 	}
 
+	// Schedule task:company_contact_discovery every 6 hours (cron: "0 */6 * * *")
+	contactDiscoveryTask, err := queue.NewCompanyContactDiscoveryBatchTask()
+	if err == nil {
+		startupClient := asynq.NewClient(asynq.RedisClientOpt{Addr: cfg.RedisURL})
+		if info, enqueueErr := startupClient.Enqueue(contactDiscoveryTask); enqueueErr != nil {
+			log.Printf("Notice: Could not enqueue instant startup contact discovery task: %v", enqueueErr)
+		} else {
+			log.Printf("Enqueued instant startup company contact discovery sweep to Redis queue (TaskID: %s)", info.ID)
+		}
+		startupClient.Close()
+
+		if entryID, err := scheduler.Register("0 */6 * * *", contactDiscoveryTask); err != nil {
+			log.Printf("Warning: Could not register company contact discovery cron: %v", err)
+		} else {
+			log.Printf("Registered company contact discovery cron with entry ID: %s", entryID)
+		}
+	}
+
+	// Serper quota monitoring moved 100% to web-scraper discovery engine
+
+
 	go func() {
 		fbWorker := queue.NewCompanyFacebookWorker(dbPool)
 		_ = fbWorker.HandleCompanyFacebookBatchCheck(context.Background(), nil)
@@ -214,6 +239,8 @@ func main() {
 				queue.QueueCompanyLinkedInDiscoveryBatch:  2,
 				queue.QueueCompanyInstagramBatchCheck:   2,
 				queue.QueueCompanyInstagramDiscoveryBatch: 2,
+				queue.QueueCompanyContactDiscoveryBatch:   2,
+				queue.QueueSerperQuota:                  2,
 				queue.QueueRawIngestion:                 10,
 				queue.QueueLLMExtraction:                5,
 				queue.QueueESGExtraction:                5,
@@ -237,6 +264,8 @@ func main() {
 	mux.HandleFunc(queue.TypeCompanyLinkedInDiscoveryBatch, companyLinkedInDiscoveryWorker.HandleCompanyLinkedInDiscoveryBatch)
 	mux.HandleFunc(queue.TypeCompanyInstagramBatchCheck, companyInstagramWorker.HandleCompanyInstagramBatchCheck)
 	mux.HandleFunc(queue.TypeCompanyInstagramDiscoveryBatch, companyInstagramDiscoveryWorker.HandleCompanyInstagramDiscoveryBatch)
+	mux.HandleFunc(queue.TypeCompanyContactDiscoveryBatch, companyContactDiscoveryWorker.HandleCompanyContactDiscoveryBatch)
+	mux.HandleFunc(queue.TypeSerperQuotaCheck, serperQuotaWorker.HandleSerperQuotaCheck)
 
 
 	log.Println("Asynq Worker server listening for queue jobs...")

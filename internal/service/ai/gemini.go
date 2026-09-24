@@ -81,7 +81,16 @@ JSON Keys Required:
 Input Text:
 %s`, rawText)
 
-	url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-lite-latest:generateContent?key=%s", s.apiKey)
+	modelsToTry := []string{
+		"gemini-3.1-flash-lite",
+		"gemini-3.5-flash-lite",
+		"gemini-3.6-flash",
+		"gemini-3.7-flash",
+		"gemini-3.8-flash",
+		"gemini-flash-lite-latest",
+		"gemini-flash-latest",
+	}
+
 	reqBody := map[string]interface{}{
 		"contents": []map[string]interface{}{
 			{
@@ -101,25 +110,56 @@ Input Text:
 		return nil, fmt.Errorf("failed to marshal Gemini request: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonBytes))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create Gemini request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
+	var lastErr error
+	var bodyBytes []byte
 
-	resp, err := s.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to execute Gemini HTTP call: %w", err)
-	}
-	defer resp.Body.Close()
+	for _, modelName := range modelsToTry {
+		url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent?key=%s", modelName, s.apiKey)
+		
+		for attempt := 0; attempt < 3; attempt++ {
+			req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonBytes))
+			if err != nil {
+				lastErr = err
+				break
+			}
+			req.Header.Set("Content-Type", "application/json")
 
-	bodyBytes, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read Gemini response body: %w", err)
+			resp, err := s.httpClient.Do(req)
+			if err != nil {
+				lastErr = err
+				break
+			}
+
+			bodyBytes, err = io.ReadAll(resp.Body)
+			resp.Body.Close()
+
+			if err != nil {
+				lastErr = err
+				break
+			}
+
+			if resp.StatusCode == http.StatusOK {
+				lastErr = nil
+				break
+			}
+
+			lastErr = fmt.Errorf("Gemini API model %s call failed with status %d: %s", modelName, resp.StatusCode, string(bodyBytes))
+
+			if resp.StatusCode == http.StatusTooManyRequests {
+				time.Sleep(time.Duration(4*(attempt+1)) * time.Second)
+				continue
+			}
+
+			break
+		}
+
+		if lastErr == nil {
+			break
+		}
 	}
 
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("Gemini API call failed with status %d: %s", resp.StatusCode, string(bodyBytes))
+	if lastErr != nil {
+		return nil, lastErr
 	}
 
 	var geminiResp struct {
@@ -140,7 +180,20 @@ Input Text:
 
 	var signal ExtractedSignal
 	if err := json.Unmarshal([]byte(extractedText), &signal); err != nil {
-		return nil, fmt.Errorf("failed to parse Gemini JSON signal payload: %w", err)
+		// Attempt unmarshaling as a slice if Gemini returned a JSON array of signals
+		var signals []ExtractedSignal
+		if arrErr := json.Unmarshal([]byte(extractedText), &signals); arrErr == nil && len(signals) > 0 {
+			best := signals[0]
+			for _, sig := range signals {
+				if sig.CompanyName != "" && !strings.EqualFold(sig.CompanyName, "Unknown") && !strings.EqualFold(sig.CSRRelevance, "NON_CSR") {
+					best = sig
+					break
+				}
+			}
+			signal = best
+		} else {
+			return nil, fmt.Errorf("failed to parse Gemini JSON signal payload: %w", err)
+		}
 	}
 
 	// Compute grounded confidence rating
