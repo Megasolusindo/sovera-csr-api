@@ -209,3 +209,41 @@ func (h *SupportHandler) UpdateDraft(c *fiber.Ctx) error {
 		"success": true,
 	})
 }
+
+type EditDraftRequest struct {
+	TicketID string `json:"ticket_id"`
+	Text     string `json:"text"`
+}
+
+// EditDraft replaces the AI draft reply text with a human-revised version.
+// The draft stays PENDING so it can be reviewed/approved again afterwards.
+func (h *SupportHandler) EditDraft(c *fiber.Ctx) error {
+	var req EditDraftRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": "Invalid request body"})
+	}
+	if req.TicketID == "" || req.Text == "" {
+		return c.Status(400).JSON(fiber.Map{"error": "ticket_id and text are required"})
+	}
+
+	ct, err := h.pool.Exec(c.Context(), `
+		UPDATE support.support_drafts
+		SET draft_text = $1::text,
+		    final_text = $1::text,
+		    gate_decision = 'EDITED',
+		    status = 'PENDING',
+		    awaiting_edit_by = NULL,
+		    updated_at = NOW()
+		WHERE ticket_id = $2
+	`, req.Text, req.TicketID)
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+	if ct.RowsAffected() == 0 {
+		return c.Status(404).JSON(fiber.Map{"error": "draft not found for ticket_id"})
+	}
+
+	return c.JSON(fiber.Map{
+		"success": true,
+	})
+}

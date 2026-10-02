@@ -14,7 +14,7 @@ const { verifyLinkedInURL, triggerBatchCompanyLinkedInVerification, triggerBatch
 const { verifyInstagramURL, triggerBatchCompanyInstagramVerification, triggerBatchCompanyInstagramDiscovery, getCompanyInstagramStats } = require('./skills/instagram_verifier_skill');
 const { triggerLiveIDXSync } = require('./skills/idx_sync_skill');
 
-const { sendTelegramMessage, registerTelegramBotCommands } = require('./telegram');
+const { sendTelegramMessage, registerTelegramBotCommands, sendTelegramSupportDraftReview } = require('./telegram');
 
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '8850608348:AAHXkUz7nldwf2WR9dmMm5NI9Yox-WWC2Gw';
 const CSR_API_BASE_URL = process.env.CSR_API_BASE_URL || 'http://api:4000/api/v1/ai';
@@ -22,6 +22,10 @@ const OPENCLAW_AGENT_TOKEN = process.env.OPENCLAW_AGENT_TOKEN || 'openclaw_agent
 const AI_API_KEY = process.env.AI_API_KEY || '';
 
 let lastUpdateId = 0;
+
+// Tracks chats that pressed "Edit Draft" and are expected to send the revised
+// text as their next message. Maps chatId -> ticketId.
+const pendingEdits = {};
 
 async function fetchLiveSystemStats() {
   try {
@@ -251,6 +255,45 @@ async function processCommand(text, chatId) {
   const trimmed = text.trim();
   const lower = trimmed.toLowerCase();
   console.log(`📩 [OpenClaw Inbound Telegram] Received message: "${trimmed}" from Chat ID: ${chatId}`);
+
+  // 0. Awaiting-edit intercept: if this chat pressed "Edit Draft", treat the next
+  // plain message as the revised draft text. /cancel aborts; other slash commands
+  // fall through so the user can still run commands instead of editing.
+  if (pendingEdits[chatId]) {
+    if (lower === '/cancel' || lower === 'batal') {
+      delete pendingEdits[chatId];
+      await sendTelegramMessage(`↩️ <i>Mode edit draft dibatalkan.</i>`, chatId);
+      return;
+    }
+    if (!trimmed.startsWith('/')) {
+      const ticketId = pendingEdits[chatId];
+      delete pendingEdits[chatId];
+      try {
+        const res = await httpRequest(`${CSR_API_BASE_URL}/support/edit_draft`, {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${OPENCLAW_AGENT_TOKEN}`, 'Content-Type': 'application/json' }
+        }, { ticket_id: ticketId, text: trimmed });
+
+        if (res.statusCode >= 200 && res.statusCode < 300 && res.data && res.data.success) {
+          await sendTelegramSupportDraftReview({
+            ticket_id: ticketId,
+            intent: 'EDITED',
+            confidence: '-',
+            subject: '(revisi manual)',
+            body: 'Draft telah direvisi secara manual oleh reviewer.',
+            draft_text: trimmed,
+            sources: []
+          }, chatId);
+          await sendTelegramMessage(`✅ <b>Draft Ticket ${ticketId} berhasil direvisi.</b>\n<i>Silakan tinjau ulang di atas, lalu Approve atau Edit kembali.</i>`, chatId);
+        } else {
+          await sendTelegramMessage(`⚠️ <i>Gagal menyimpan revisi (HTTP ${res.statusCode}). Coba tekan Edit Draft lagi.</i>`, chatId);
+        }
+      } catch (err) {
+        await sendTelegramMessage(`❌ <i>Error menyimpan revisi: ${err.message}</i>`, chatId);
+      }
+      return;
+    }
+  }
 
   // 1. Help & Greetings
   if (trimmed.startsWith('/start') || trimmed.startsWith('/help') || lower === 'halo' || lower === 'hi' || lower === 'ping' || lower.includes('selamat')) {
@@ -1104,7 +1147,13 @@ async function processCallbackQuery(callbackQuery) {
         decision = 'REJECTED';
         statusText = `❌ Draft Ticket ${ticketId} Rejected (Escalated to Human)`;
       } else if (action === 'draft_edit') {
-        await sendTelegramMessage(`✏️ Silakan kirimkan revisi draft untuk Ticket ${ticketId} dengan format:\n/editdraft ${ticketId} <teks_baru>`, chatId);
+        // Enter awaiting-edit mode: the next plain message from this chat becomes
+        // the revised draft text (no need to type the ticket id).
+        pendingEdits[chatId] = ticketId;
+        // Acknowledge the button so Telegram clears its loading spinner.
+        const ackUrl = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/answerCallbackQuery`;
+        await httpRequest(ackUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' } }, { callback_query_id: callbackQuery.id });
+        await sendTelegramMessage(`✏️ <b>Mode Edit Draft</b> untuk Ticket <code>${ticketId}</code>.\n\nKirimkan teks balasan baru sebagai pesan berikutnya. Ketik <code>/cancel</code> untuk membatalkan.`, chatId);
         return;
       }
 
