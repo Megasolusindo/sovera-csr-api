@@ -48,14 +48,19 @@ async function callGeminiConversationalAI(userPrompt) {
   const stats = await fetchLiveSystemStats();
   let statsContext = '';
   if (stats) {
-    statsContext = 
+    statsContext =
       `\nData Metrics Real-Time dari Database System of Record:\n` +
-      `- Total Lembaga/Organisasi (NGO/Yayasan/Mitra) Terdaftar: ${stats.total_organizations || 105}\n` +
-      `- Total Perusahaan/Korporasi (Funder/BUMN) Terdaftar: ${stats.total_companies || 0}\n` +
-      `- Total Signal CSR Terdeteksi: ${stats.total_signals || 0}\n` +
-      `- Total Program CSR Terdata: ${stats.total_csr_programs || 0}\n` +
-      `- Total Target Crawling/Scraping: ${stats.total_scraping_jobs || 0} (${stats.active_scraping_jobs || 0} aktif)\n` +
+      `- Total Lembaga/Organisasi (NGO/Yayasan/Mitra) Terdaftar: ${stats.total_organizations ?? 0}\n` +
+      `- Total Perusahaan/Korporasi (Funder/BUMN) Terdaftar: ${stats.total_companies ?? 0}\n` +
+      `- Total Signal CSR Terdeteksi: ${stats.total_signals ?? 0}\n` +
+      `- Total Program CSR Terdata: ${stats.total_csr_programs ?? 0}\n` +
+      `- Total Target Crawling/Scraping: ${stats.total_scraping_jobs ?? 0} (${stats.active_scraping_jobs ?? 0} aktif)\n` +
       `- Status Kesehatan Crawler System: ${stats.system_health || 'OPERATIONAL'} (Uptime: ${stats.sla_uptime || '99.98%'})\n`;
+  } else {
+    statsContext =
+      `\nCATATAN: Data metrik real-time dari database SEDANG TIDAK TERSEDIA (API /stats tidak terjangkau). ` +
+      `JANGAN mengarang angka. Jika pengguna menanyakan jumlah lembaga, organisasi, perusahaan, signal, atau metrik apa pun, ` +
+      `nyatakan dengan jujur bahwa data real-time sedang tidak dapat diambil saat ini dan minta pengguna mencoba lagi.\n`;
   }
 
   const modelsToTry = ['gemini-flash-lite-latest', 'gemini-3.5-flash-lite', 'gemini-flash-latest'];
@@ -67,8 +72,8 @@ async function callGeminiConversationalAI(userPrompt) {
     `- Fokus utama jawaban Anda adalah seputar CSR, TJSL, BUMN, ESG, keberlanjutan, riset perusahaan, dan statistik sistem OpenClaw.\n` +
     `- Jika pengguna mengajukan pertanyaan di luar konteks CSR/TJSL/bisnis (misal: hiburan, olahraga, resep makanan), jawab secara ringkas dan dengan sopan ingatkan bahwa fokus Anda adalah sebagai asisten kecerdasan CSR & TJSL.\n` +
     `PENTING SAAT MENJAWAB METRIK / STATISTIK DATABASE:\n` +
-    `- "Lembaga", "Organisasi", "NGO", "Yayasan", atau "Mitra Pemberdayaan" merujuk pada entitas non-profit di tabel database 'organizations' (Total saat ini: ${stats?.total_organizations || 105}).\n` +
-    `- "Perusahaan", "Korporasi", "BUMN", "PT", atau "Funder" merujuk pada entitas korporasi di tabel database 'companies' (Total saat ini: ${stats?.total_companies || 5464}).\n` +
+    `- "Lembaga", "Organisasi", "NGO", "Yayasan", atau "Mitra Pemberdayaan" merujuk pada entitas non-profit di tabel database 'organizations'${stats ? ` (Total saat ini: ${stats.total_organizations ?? 0})` : ' (jumlah real-time sedang tidak tersedia)'}.\n` +
+    `- "Perusahaan", "Korporasi", "BUMN", "PT", atau "Funder" merujuk pada entitas korporasi di tabel database 'companies'${stats ? ` (Total saat ini: ${stats.total_companies ?? 0})` : ' (jumlah real-time sedang tidak tersedia)'}.\n` +
     `- Jika pengguna menanyakan jumlah "lembaga" atau "organisasi" terdaftar, jawab dengan total Lembaga/Organisasi (bukan total Perusahaan).\n` +
     `- Gunakan format teks rapi dengan penomoran, simbol bullet (•), dan pemisahan paragraf yang jelas.\n` +
     `- Format cetak tebal (bold) HANYA untuk kata kunci utama, judul, atau angka penting (jangan tebalkan seluruh paragraf).\n` +
@@ -788,22 +793,91 @@ async function processCommand(text, chatId) {
     return;
   }
 
+  if (trimmed.startsWith('/stats linkedin') || (lower.includes('linkedin') && lower.includes('stats'))) {
+    try {
+      const stats = await getCompanyLinkedInStats();
+      if (stats) {
+        const msg = 
+          `📊 <b>Statistik Audit LinkedIn Perusahaan:</b>\n\n` +
+          `🏢 <b>Total Perusahaan:</b> <code>${stats.total_companies?.toLocaleString('id-ID') || 0}</code>\n` +
+          `🔗 <b>Memiliki LinkedIn URL:</b> <code>${stats.has_linkedin?.toLocaleString('id-ID') || 0}</code>\n` +
+          `✅ <b>Status VALID & Aktif:</b> <code>${stats.valid_count?.toLocaleString('id-ID') || 0}</code>\n` +
+          `❌ <b>Status INVALID / Dead Link:</b> <code>${stats.invalid_count?.toLocaleString('id-ID') || 0}</code>\n` +
+          `⏳ <b>Belum Diverifikasi (Unverified):</b> <code>${stats.unverified_count?.toLocaleString('id-ID') || 0}</code>\n\n` +
+          `💡 <i>Jalankan <code>/discover_linkedin</code> untuk mencari link LinkedIn perusahaan INVALID.</i>`;
+        await sendTelegramMessage(msg, chatId);
+      } else {
+        await sendTelegramMessage(`⚠️ <i>Gagal mengambil statistik LinkedIn dari API.</i>`, chatId);
+      }
+    } catch (err) {
+      await sendTelegramMessage(`❌ <i>Error: ${err.message}</i>`, chatId);
+    }
+    return;
+  }
+
+  if (trimmed.startsWith('/stats instagram') || (lower.includes('instagram') && lower.includes('stats')) || (lower.includes('statistik') && lower.includes('instagram'))) {
+    try {
+      const stats = await getCompanyInstagramStats();
+      if (stats) {
+        const msg = 
+          `📊 <b>Statistik Audit Instagram Perusahaan:</b>\n\n` +
+          `🏢 <b>Total Perusahaan:</b> <code>${stats.total_companies?.toLocaleString('id-ID') || 0}</code>\n` +
+          `📸 <b>Memiliki Instagram URL:</b> <code>${stats.has_instagram?.toLocaleString('id-ID') || 0}</code>\n` +
+          `✅ <b>Status VALID & Aktif:</b> <code>${stats.valid_count?.toLocaleString('id-ID') || 0}</code>\n` +
+          `❌ <b>Status INVALID / Dead Link:</b> <code>${stats.invalid_count?.toLocaleString('id-ID') || 0}</code>\n` +
+          `⏳ <b>Belum Diverifikasi (Unverified):</b> <code>${stats.unverified_count?.toLocaleString('id-ID') || 0}</code>\n\n` +
+          `💡 <i>Jalankan <code>/discover_instagram</code> untuk mencari link Instagram perusahaan INVALID.</i>`;
+        await sendTelegramMessage(msg, chatId);
+      } else {
+        await sendTelegramMessage(`⚠️ <i>Gagal mengambil statistik Instagram dari API.</i>`, chatId);
+      }
+    } catch (err) {
+      await sendTelegramMessage(`❌ <i>Error: ${err.message}</i>`, chatId);
+    }
+    return;
+  }
+
+  if (trimmed.startsWith('/stats website') || (lower.includes('website') && lower.includes('stats')) || (lower.includes('statistik') && lower.includes('website'))) {
+    try {
+      const url = `${CSR_API_BASE_URL.replace(/\/ai\/?$/, '/admin/website-stats')}`;
+      const res = await httpRequest(url, {
+        headers: { 'Authorization': `Bearer ${OPENCLAW_AGENT_TOKEN}` }
+      });
+      if (res.statusCode === 200 && res.data && res.data.stats) {
+        const stats = res.data.stats;
+        const total = res.data.total || 0;
+
+        const msg = 
+          `📊 <b>Statistik Pemantauan Target URL Website:</b>\n\n` +
+          `Total Corporate: <code>${total.toLocaleString('id-ID')}</code>\n` +
+          `Total Corporate dg website: <code>${(stats.has_website || 0).toLocaleString('id-ID')}</code>\n` +
+          `Total Corporate dg website valid: <code>${(stats.healthy_count || 0).toLocaleString('id-ID')}</code>\n\n` +
+          `<b>Rincian Error URL Website:</b>\n` +
+          `• <b>Dead Links (404/410):</b> <code>${(stats.http_404_dead_links || 0).toLocaleString('id-ID')}</code>\n` +
+          `• <b>Rate Limited (429):</b> <code>${(stats.http_429_rate_limited || 0).toLocaleString('id-ID')}</code>\n` +
+          `• <b>Server Errors (5xx):</b> <code>${(stats.http_500_server_errors || 0).toLocaleString('id-ID')}</code>`;
+        await sendTelegramMessage(msg, chatId);
+      } else {
+        await sendTelegramMessage(`⚠️ <i>Gagal mengambil statistik Website URL dari API (HTTP ${res.statusCode}).</i>`, chatId);
+      }
+    } catch (err) {
+      await sendTelegramMessage(`❌ <i>Error: ${err.message}</i>`, chatId);
+    }
+    return;
+  }
+
   // 6. System Stats Intent (Hari ini, Kemarin, Total, Lembaga/Organisasi)
   if (trimmed.startsWith('/stats') || lower.includes('statistik feed') || lower.includes('feed stats') || lower.includes('berapa data') || lower.includes('statistik') || lower.includes('status crawler') || lower.includes('berapa signal') || lower.includes('berapa crawling') || lower.includes('berapa lembaga') || lower.includes('berapa organisasi') || lower.includes('total lembaga') || lower.includes('total organisasi')) {
-    let stats = await fetchLiveSystemStats();
+    const stats = await fetchLiveSystemStats();
     if (!stats) {
-      stats = {
-        targets_crawled_today: 1997,
-        targets_crawled_yesterday: 0,
-        active_scraping_jobs: 17848,
-        total_scraping_jobs: 32224,
-        total_signals: 43,
-        total_csr_programs: 76,
-        total_companies: 13273,
-        total_organizations: 106,
-        system_health: 'OPERATIONAL',
-        sla_uptime: '99.98%'
-      };
+      await sendTelegramMessage(
+        `⚠️ <b>Data Real-Time Tidak Tersedia</b>\n\n` +
+        `Gagal mengambil statistik dari Database System of Record OpenClaw. ` +
+        `API metrik (<code>/stats</code>) sedang tidak terjangkau.\n\n` +
+        `🔁 <i>Silakan coba lagi beberapa saat. Angka tidak ditampilkan agar monitoring tetap akurat.</i>`,
+        chatId
+      );
+      return;
     }
 
     const isYesterday = lower.includes('kemarin') || lower.includes('yesterday');
@@ -815,7 +889,7 @@ async function processCommand(text, chatId) {
       statsMsg = 
         `🏛️ <b>Total Lembaga / Organisasi Terdaftar:</b>\n\n` +
         `Berdasarkan Data Metrics Real-Time dari Database System of Record OpenClaw AI saat ini, berikut adalah jumlah lembaga terdaftar:\n\n` +
-        `• <b>Total Lembaga/Organisasi Terdaftar:</b> <code>${stats.total_organizations?.toLocaleString('id-ID') || 106}</code> lembaga/organisasi (NGO/Yayasan/Mitra).`;
+        `• <b>Total Lembaga/Organisasi Terdaftar:</b> <code>${(stats.total_organizations ?? 0).toLocaleString('id-ID')}</code> lembaga/organisasi (NGO/Yayasan/Mitra).`;
     } else if (isYesterday) {
       statsMsg = 
         `📊 <b>Statistik Feed & Crawling KEMARIN:</b>\n\n` +
@@ -839,7 +913,7 @@ async function processCommand(text, chatId) {
         `💡 <b>Total Signal CSR Terdata:</b> <code>${stats.total_signals?.toLocaleString('id-ID') || 0}</code> Signal\n` +
         `📋 <b>Total Program CSR Terdata:</b> <code>${stats.total_csr_programs?.toLocaleString('id-ID') || 0}</code> Program\n` +
         `🏢 <b>Total Perusahaan:</b> <code>${stats.total_companies?.toLocaleString('id-ID') || 0}</code> Korporasi\n` +
-        `🏛️ <b>Total Lembaga / Organisasi:</b> <code>${stats.total_organizations?.toLocaleString('id-ID') || 106}</code> Lembaga\n` +
+        `🏛️ <b>Total Lembaga / Organisasi:</b> <code>${(stats.total_organizations ?? 0).toLocaleString('id-ID')}</code> Lembaga\n` +
         `🟢 <b>Status Sistem:</b> <b>${stats.system_health || 'OPERATIONAL'}</b> (SLA Uptime: <code>${stats.sla_uptime || '99.98%'}</code>)`;
     }
 
@@ -888,7 +962,7 @@ async function processCommand(text, chatId) {
     try {
       const res = await triggerBatchCompanyLinkedInVerification();
       if (res && res.success) {
-        await sendTelegramMessage(`✅ <b>Task Berhasil Dijalankan di Background!</b>\n\nWorker Asynq sedang memverifikasi URL LinkedIn perusahaan satu per satu. Gunakan <code>/linkedin_stats</code> untuk melihat perkembangan status audit.`, chatId);
+        await sendTelegramMessage(`✅ <b>Task Berhasil Dijalankan di Background!</b>\n\nWorker Asynq sedang memverifikasi URL LinkedIn perusahaan satu per satu. Gunakan <code>/stats linkedin</code> untuk melihat perkembangan status audit.`, chatId);
       } else {
         await sendTelegramMessage(`⚠️ <i>Gagal memicu batch verification task.</i>`, chatId);
       }
@@ -928,12 +1002,31 @@ async function processCommand(text, chatId) {
     return;
   }
 
+  if (trimmed.startsWith('/discover_website') || (lower.includes('cari website') && (lower.includes('invalid') || lower.includes('unverified') || lower.includes('kosong')))) {
+    await sendTelegramMessage(`🌐 <b>OpenClaw Website Enrichment Worker Triggered!</b>\n\nMemulai proses background worker untuk mencari dan memverifikasi URL website resmi perusahaan (untuk yang masih kosong/UNVERIFIED).`, chatId);
+    try {
+      const url = `${CSR_API_BASE_URL.replace(/\/ai\/?$/, '/url/discover-website-batch')}`;
+      const res = await httpRequest(url, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${OPENCLAW_AGENT_TOKEN}` }
+      });
+      if (res.statusCode >= 200 && res.statusCode < 300 && res.data && res.data.success) {
+        await sendTelegramMessage(`✅ <b>Task Enrichment Website Berhasil Dijalankan di Background!</b>\n\nWorker Asynq sedang mencari data website via Serper API & Crawler untuk melengkapi data perusahaan.`, chatId);
+      } else {
+        await sendTelegramMessage(`⚠️ <i>Gagal memicu batch discovery website task. (HTTP ${res.statusCode})</i>`, chatId);
+      }
+    } catch (err) {
+      await sendTelegramMessage(`❌ <i>Error: ${err.message}</i>`, chatId);
+    }
+    return;
+  }
+
   if (trimmed.startsWith('/audit_instagram_all') || trimmed.startsWith('/check_all_instagram') || (lower.includes('audit') && lower.includes('instagram') && (lower.includes('semua') || lower.includes('perusahaan') || lower.includes('seluruh')))) {
     await sendTelegramMessage(`🚀 <b>OpenClaw Instagram Batch Audit Triggered!</b>\n\nMemulai proses background worker untuk memeriksa validitas URL Instagram seluruh perusahaan di database.`, chatId);
     try {
       const res = await triggerBatchCompanyInstagramVerification();
       if (res && res.success) {
-        await sendTelegramMessage(`✅ <b>Task Berhasil Dijalankan di Background!</b>\n\nWorker Asynq sedang memverifikasi URL Instagram perusahaan satu per satu. Gunakan <code>/instagram_stats</code> untuk melihat perkembangan status audit.`, chatId);
+        await sendTelegramMessage(`✅ <b>Task Berhasil Dijalankan di Background!</b>\n\nWorker Asynq sedang memverifikasi URL Instagram perusahaan satu per satu. Gunakan <code>/stats instagram</code> untuk melihat perkembangan status audit.`, chatId);
       } else {
         await sendTelegramMessage(`⚠️ <i>Gagal memicu batch verification Instagram task.</i>`, chatId);
       }
@@ -943,49 +1036,7 @@ async function processCommand(text, chatId) {
     return;
   }
 
-  if (trimmed.startsWith('/linkedin_stats') || (lower.includes('linkedin') && lower.includes('stats'))) {
-    try {
-      const stats = await getCompanyLinkedInStats();
-      if (stats) {
-        const msg = 
-          `📊 <b>Statistik Audit LinkedIn Perusahaan:</b>\n\n` +
-          `🏢 <b>Total Perusahaan:</b> <code>${stats.total_companies?.toLocaleString('id-ID') || 0}</code>\n` +
-          `🔗 <b>Memiliki LinkedIn URL:</b> <code>${stats.has_linkedin?.toLocaleString('id-ID') || 0}</code>\n` +
-          `✅ <b>Status VALID & Aktif:</b> <code>${stats.valid_count?.toLocaleString('id-ID') || 0}</code>\n` +
-          `❌ <b>Status INVALID / Dead Link:</b> <code>${stats.invalid_count?.toLocaleString('id-ID') || 0}</code>\n` +
-          `⏳ <b>Belum Diverifikasi (Unverified):</b> <code>${stats.unverified_count?.toLocaleString('id-ID') || 0}</code>\n\n` +
-          `💡 <i>Jalankan <code>/discover_linkedin</code> untuk mencari link LinkedIn perusahaan INVALID.</i>`;
-        await sendTelegramMessage(msg, chatId);
-      } else {
-        await sendTelegramMessage(`⚠️ <i>Gagal mengambil statistik LinkedIn dari API.</i>`, chatId);
-      }
-    } catch (err) {
-      await sendTelegramMessage(`❌ <i>Error: ${err.message}</i>`, chatId);
-    }
-    return;
-  }
 
-  if (trimmed.startsWith('/instagram_stats') || (lower.includes('instagram') && lower.includes('stats')) || (lower.includes('statistik') && lower.includes('instagram'))) {
-    try {
-      const stats = await getCompanyInstagramStats();
-      if (stats) {
-        const msg = 
-          `📊 <b>Statistik Audit Instagram Perusahaan:</b>\n\n` +
-          `🏢 <b>Total Perusahaan:</b> <code>${stats.total_companies?.toLocaleString('id-ID') || 0}</code>\n` +
-          `📸 <b>Memiliki Instagram URL:</b> <code>${stats.has_instagram?.toLocaleString('id-ID') || 0}</code>\n` +
-          `✅ <b>Status VALID & Aktif:</b> <code>${stats.valid_count?.toLocaleString('id-ID') || 0}</code>\n` +
-          `❌ <b>Status INVALID / Dead Link:</b> <code>${stats.invalid_count?.toLocaleString('id-ID') || 0}</code>\n` +
-          `⏳ <b>Belum Diverifikasi (Unverified):</b> <code>${stats.unverified_count?.toLocaleString('id-ID') || 0}</code>\n\n` +
-          `💡 <i>Jalankan <code>/discover_instagram</code> untuk mencari link Instagram perusahaan INVALID.</i>`;
-        await sendTelegramMessage(msg, chatId);
-      } else {
-        await sendTelegramMessage(`⚠️ <i>Gagal mengambil statistik Instagram dari API.</i>`, chatId);
-      }
-    } catch (err) {
-      await sendTelegramMessage(`❌ <i>Error: ${err.message}</i>`, chatId);
-    }
-    return;
-  }
 
 
   // 6.7 Real Live IDX Sync Intent (/sync_idx, "sinkronkan data idx", "update idx")
@@ -1025,6 +1076,62 @@ async function processCommand(text, chatId) {
   );
 }
 
+async function processCallbackQuery(callbackQuery) {
+  const data = callbackQuery.data;
+  const chatId = callbackQuery.message.chat.id;
+  
+  if (!data) return;
+  
+  try {
+    if (data.startsWith('draft_')) {
+      const parts = data.split(':');
+      const action = parts[0]; // draft_approve, draft_edit, draft_reject
+      const ticketId = parts[1];
+      
+      let decision = 'PENDING';
+      let statusText = '';
+      if (action === 'draft_approve') {
+        decision = 'APPROVED';
+        statusText = `✅ Draft Ticket ${ticketId} Approved & Sent`;
+      } else if (action === 'draft_reject') {
+        decision = 'REJECTED';
+        statusText = `❌ Draft Ticket ${ticketId} Rejected (Escalated to Human)`;
+      } else if (action === 'draft_edit') {
+        await sendTelegramMessage(`✏️ Silakan kirimkan revisi draft untuk Ticket ${ticketId} dengan format:\n/editdraft ${ticketId} <teks_baru>`, chatId);
+        return;
+      }
+
+      // Answer the callback query to remove loading state
+      const answerUrl = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/answerCallbackQuery`;
+      await httpRequest(answerUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      }, { callback_query_id: callbackQuery.id });
+      
+      console.log(`[OpenClaw Callback] Action: ${action} | Ticket: ${ticketId}`);
+
+      // Call API to update draft status
+      const updateUrl = `${CSR_API_BASE_URL}/support/update_draft`;
+      const res = await httpRequest(updateUrl, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${OPENCLAW_AGENT_TOKEN}`,
+          'Content-Type': 'application/json'
+        }
+      }, {
+        ticket_id: ticketId,
+        decision: decision
+      });
+      
+      console.log(`[OpenClaw Callback] API Update Response:`, res.statusCode);
+
+      await sendTelegramMessage(statusText, chatId);
+    }
+  } catch (err) {
+    console.error(`[OpenClaw Callback Error]:`, err.message);
+  }
+}
+
 async function startTelegramReceiver() {
   console.log(`📱 [OpenClaw Inbound Telegram Receiver] Started polling for commands & natural text...`);
   try {
@@ -1042,6 +1149,8 @@ async function startTelegramReceiver() {
 
         if (update.message && update.message.text) {
           await processCommand(update.message.text, update.message.chat.id);
+        } else if (update.callback_query) {
+          await processCallbackQuery(update.callback_query);
         }
       }
     } catch (err) {
