@@ -917,7 +917,7 @@ async function processCommand(text, chatId) {
   }
 
   // 6. System Stats Intent (Hari ini, Kemarin, Total, Lembaga/Organisasi)
-  if (trimmed.startsWith('/stats') || lower.includes('statistik feed') || lower.includes('feed stats') || lower.includes('berapa data') || lower.includes('statistik') || lower.includes('status crawler') || lower.includes('berapa signal') || lower.includes('berapa crawling') || lower.includes('berapa lembaga') || lower.includes('berapa organisasi') || lower.includes('total lembaga') || lower.includes('total organisasi')) {
+  if (trimmed.startsWith('/stats') || lower.includes('statistik feed') || lower.includes('feed stats') || lower.includes('berapa data') || lower.includes('statistik') || lower.includes('status crawler') || lower.includes('berapa signal') || lower.includes('berapa crawling') || lower.includes('berapa lembaga') || lower.includes('berapa organisasi') || lower.includes('total lembaga') || lower.includes('total organisasi') || lower.includes('berapa feed') || lower.includes('jumlah feed') || (lower.includes('feed') && (lower.includes('hari ini') || lower.includes('kemarin')))) {
     const stats = await fetchLiveSystemStats();
     if (!stats) {
       await sendTelegramMessage(
