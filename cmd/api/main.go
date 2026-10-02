@@ -32,6 +32,7 @@ import (
 	"sovera-core-api/internal/service/keyperson"
 	"sovera-core-api/internal/service/normalizer"
 	"sovera-core-api/internal/service/storage"
+	"sovera-core-api/internal/service/support"
 	"sovera-core-api/internal/service/urlverifier"
 )
 
@@ -182,6 +183,9 @@ func main() {
 	ahuHandler := handler.NewAHUHandler(ahuRepo)
 	ossRepo := repository.NewOSSRepository(dbPool)
 	ossHandler := handler.NewOSSHandler(ossRepo)
+	
+	smtpSvc := support.NewSmtpOutbound(cfg)
+	supportHandler := handler.NewSupportHandler(dbPool, smtpSvc)
 
 	// Seed default OpenClaw AI Agent credential if DB pool is ready
 	if dbPool != nil && cfg.OpenClawAgentToken != "" {
@@ -192,6 +196,22 @@ func main() {
 		if err := aiRepo.SeedAgentCredential(context.Background(), "openclaw-agent-legacy", "openclaw_agent_live_key_998877665544", []string{"research:create", "company:read", "csr_program:create"}); err != nil {
 			log.Printf("[AI Agent Seed Error Legacy] %v", err)
 		}
+	}
+	
+	// Initialize Customer Support (Phase 0 Ingest)
+	supportRepo := repository.NewSupportRepository(dbPool)
+	if cfg.ImapHost != "" && cfg.ImapUser != "" {
+		imapConfig := support.IMAPConfig{
+			Server:   cfg.ImapHost,
+			Port:     cfg.ImapPort,
+			Username: cfg.ImapUser,
+			Password: cfg.ImapPassword,
+			UseTLS:   cfg.ImapUseTLS,
+		}
+		imapIngester := support.NewIMAPIngester(imapConfig, supportRepo)
+		
+		// Start IMAP listener in background
+		go imapIngester.Start(context.Background())
 	}
 
 	// Root & Health check routes (public)
@@ -225,6 +245,17 @@ func main() {
 	toolsGroup.Post("/get_csr_signals", aiToolsHandler.GetCSRSignals)
 	toolsGroup.Post("/match_opportunity", aiToolsHandler.MatchOpportunity)
 	toolsGroup.Post("/send_session_alert", aiToolsHandler.SendSessionAlert)
+	
+	// Support AI Agent Tools
+	supportAIGroup := aiGroup.Group("/support")
+	supportAIGroup.Get("/kb_search", supportHandler.KBSearch)
+	supportAIGroup.Get("/account_status", supportHandler.GetAccountStatus)
+	supportAIGroup.Get("/ticket_history", supportHandler.GetTicketHistory)
+	supportAIGroup.Get("/pending_tickets", supportHandler.GetPendingTickets)
+	supportAIGroup.Get("/stale_drafts", supportHandler.GetStaleDrafts)
+	supportAIGroup.Post("/save_draft", supportHandler.SaveDraft)
+	supportAIGroup.Post("/update_draft", supportHandler.UpdateDraft)
+	supportAIGroup.Post("/edit_draft", supportHandler.EditDraft)
 
 	// ─── Dashboard AI Chat Dedicated API Namespace (/api/v1/tenant-ai/* & /api/v1/org-ai/*) ───
 	tenantAIGuard := middleware.OrgAIAuthMiddleware(cfg.JWTSecret)
@@ -289,6 +320,7 @@ func main() {
 	adminGroup.Get("/analytics", adminHandler.GetAnalytics)
 	adminGroup.Get("/ai-metering", adminHandler.GetAIMetering)
 	adminGroup.Get("/crawler-errors", adminHandler.GetCrawlerErrors)
+	adminGroup.Get("/website-stats", companyHandler.GetWebsiteStats)
 	adminGroup.Post("/crawler-errors/reset", adminHandler.ResetCrawlerErrors)
 	adminGroup.Get("/ai/findings", adminHandler.ListAIFindings)
 	adminGroup.Post("/ai/findings/:id/review", adminHandler.ReviewAIFinding)
@@ -393,6 +425,7 @@ func main() {
 	apiV1.Get("/url/verify-instagram", urlVerifierHandler.VerifyInstagramURL)
 	apiV1.Post("/url/verify-instagram-batch", jwtGuard, companyHandler.TriggerBatchInstagramVerification)
 	apiV1.Post("/url/discover-instagram-batch", jwtGuard, companyHandler.TriggerBatchInstagramDiscovery)
+	apiV1.Post("/url/discover-website-batch", jwtGuard, companyHandler.TriggerBatchWebsiteDiscovery)
 	apiV1.Get("/url/instagram-stats", jwtGuard, companyHandler.GetInstagramStats)
 
 	apiV1.Post("/url/verify-facebook", jwtGuard, companyHandler.VerifyFacebookURL)
