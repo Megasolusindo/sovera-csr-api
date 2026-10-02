@@ -125,7 +125,14 @@ function getTelegramUpdates() {
   return new Promise((resolve) => {
     if (!TELEGRAM_BOT_TOKEN) return resolve([]);
 
-    const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getUpdates?offset=${lastUpdateId + 1}&timeout=5`;
+    // Explicitly request callback_query (inline button presses). Telegram stores
+    // allowed_updates server-side; a previous call had narrowed it to message types
+    // only, which silently dropped every "Approve & Send" button press. Passing the
+    // full list here overwrites that stale filter.
+    const allowed = encodeURIComponent(JSON.stringify([
+      'message', 'edited_message', 'channel_post', 'edited_channel_post', 'callback_query'
+    ]));
+    const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getUpdates?offset=${lastUpdateId + 1}&timeout=5&allowed_updates=${allowed}`;
     
     https.get(url, (res) => {
       let body = '';
