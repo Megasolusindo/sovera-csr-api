@@ -151,10 +151,129 @@ async function discoverPhone(website) {
   return '';
 }
 
-// Guess / confirm an official website for an org using Serper, falling back to none.
+const SEARCH_BAD_HOSTS = ['facebook.', 'instagram.', 'linkedin.', 'youtube.', 'twitter.', 'x.com',
+  'wikipedia.', 'tokopedia.', 'detik.', 'kompas.', 'tribunnews.', 'duckduckgo.', 'bing.com',
+  'google.', 'kitabisa.com', 'tempo.co', 'liputan6.', 'merdeka.com', 'antaranews.'];
+
+function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
+
+// Build candidate domain slugs from an org name, most specific first.
+function domainSlugs(name) {
+  const n = name.toLowerCase()
+    .replace(/\([^)]*\)/g, ' ')        // drop parentheticals
+    .replace(/[^a-z0-9 ]/g, ' ')
+    .replace(/\s+/g, ' ').trim();
+  const stop = ['yayasan', 'foundation', 'indonesia', 'the', 'and', 'dan', 'perkumpulan',
+    'lembaga', 'pusat', 'nasional', 'institute', 'center', 'centre'];
+  const words = n.split(' ').filter((w) => w && !stop.includes(w));
+  const cands = [];
+  if (words.length) cands.push(words.join(''));          // core words joined
+  cands.push(n.replace(/ /g, ''));                        // all words joined (keeps "foundation")
+  if (words.length >= 2) cands.push(words.slice(0, 2).join(''));
+  if (words.length) cands.push(words[0]);                 // first core word (last resort)
+  return [...new Set(cands)].filter((s) => s && s.length >= 4);
+}
+
+// Fetch HTML (one redirect) and tell whether the org's name tokens appear on the page.
+async function pageMentionsOrg(url, name) {
+  const html = await fetchHTML(url);
+  if (!html) return false;
+  const text = html.toLowerCase();
+  const tokens = name.toLowerCase().replace(/\([^)]*\)/g, ' ').replace(/[^a-z0-9 ]/g, ' ')
+    .split(/\s+/).filter((w) => w.length >= 4 &&
+      !['yayasan', 'foundation', 'indonesia', 'lembaga', 'perkumpulan', 'institute', 'center', 'centre'].includes(w));
+  if (tokens.length === 0) return true; // nothing distinctive to check
+  // require at least one distinctive token to appear in the page
+  return tokens.some((t) => text.includes(t));
+}
+
+// Last-resort website discovery with NO search engine: guess domains from the name,
+// prefer non-profit TLDs, verify the page actually mentions the org (avoids grabbing
+// an unrelated domain that merely resolves). Free, deterministic, no rate limits.
+async function discoverWebsiteGuess(name) {
+  const slugs = domainSlugs(name);
+  const tlds = ['.or.id', '.org', '.id', '.co.id', '.com']; // non-profit TLDs first
+  for (const s of slugs) {
+    for (const t of tlds) {
+      const url = 'https://' + s + t;
+      const host = hostOf(url);
+      if (SEARCH_BAD_HOSTS.some((b) => host.includes(b))) continue;
+      if (await pageMentionsOrg(url, name)) return url;
+    }
+  }
+  return '';
+}
+
+// Single DuckDuckGo HTML query. Returns {host, blocked}. blocked=true means DDG
+// served an anti-bot challenge (HTTP 202 / no uddg links) and the call should be retried.
+function ddgOnce(name) {
+  return new Promise((resolve) => {
+    const q = encodeURIComponent(`${name} Indonesia`);
+    const req = https.request({
+      hostname: 'html.duckduckgo.com', path: '/html/?q=' + q, method: 'GET',
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17 Safari/605.1.15',
+        'Accept': 'text/html,application/xhtml+xml',
+        'Accept-Language': 'id-ID,id;q=0.9,en;q=0.8',
+      },
+    }, (r) => {
+      let b = '';
+      r.on('data', (c) => (b += c));
+      r.on('end', () => {
+        const links = [...b.matchAll(/uddg=([^&"']+)/g)]
+          .map((m) => { try { return decodeURIComponent(m[1]); } catch (e) { return ''; } })
+          .filter((u) => u.startsWith('http'));
+        if (links.length === 0) return resolve({ host: '', blocked: r.statusCode === 202 || r.statusCode === 429 });
+        for (const u of links) {
+          const host = hostOf(u);
+          if (host && !SEARCH_BAD_HOSTS.some((x) => host.includes(x))) return resolve({ host, blocked: false });
+        }
+        resolve({ host: '', blocked: false });
+      });
+    });
+    req.on('error', () => resolve({ host: '', blocked: false }));
+    req.setTimeout(15000, () => { req.destroy(); resolve({ host: '', blocked: false }); });
+    req.end();
+  });
+}
+
+// Circuit breaker: once DDG has blocked us repeatedly it stays blocked for the whole
+// run (IP-level), so stop wasting time on it and go straight to domain-guessing.
+let ddgConsecutiveBlocks = 0;
+let ddgDisabled = false;
+
+// Free fallback search via DuckDuckGo HTML (no API key, no quota). Retries once with
+// a short backoff; trips a circuit breaker after sustained anti-bot challenges.
+async function discoverWebsiteDDG(name) {
+  if (ddgDisabled) return '';
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const { host, blocked } = await ddgOnce(name);
+    if (host) { ddgConsecutiveBlocks = 0; return 'https://' + host; }
+    if (!blocked) return ''; // genuine "no result"
+    if (attempt === 0) await sleep(2000);
+  }
+  // still blocked after retry
+  if (++ddgConsecutiveBlocks >= 3) {
+    ddgDisabled = true;
+    console.log('[OpenClaw Discover] DuckDuckGo appears IP-blocked; disabling it for this run, using domain-guessing only.');
+  }
+  return '';
+}
+
+// Free fallbacks chained: DuckDuckGo search, then deterministic domain-guessing.
+async function freeWebsiteFallback(name) {
+  const ddg = await discoverWebsiteDDG(name);
+  if (ddg) return ddg;
+  return discoverWebsiteGuess(name);
+}
+
+// Find an official website, cheapest-reliable first:
+//   1. Serper (if key present & has credit)
+//   2. DuckDuckGo HTML search (free; may be rate-limited)
+//   3. Domain-guessing with content verification (free, no search engine)
 async function discoverWebsite(name) {
   const key = process.env.SERPER_API_KEY || '';
-  if (!key) return '';
+  if (!key) return freeWebsiteFallback(name);
   const res = await new Promise((resolve) => {
     const payload = JSON.stringify({ q: `${name} situs resmi`, gl: 'id', hl: 'id', num: 5 });
     const req = https.request({
@@ -165,17 +284,16 @@ async function discoverWebsite(name) {
     req.setTimeout(15000, () => { req.destroy(); resolve(null); });
     req.write(payload); req.end();
   });
-  if (!res || !Array.isArray(res.organic)) return '';
-  // skip aggregators / social; prefer an org-looking domain
-  const bad = ['facebook.', 'instagram.', 'linkedin.', 'youtube.', 'twitter.', 'x.com', 'wikipedia.', 'tokopedia.', 'detik.', 'kompas.', 'tribunnews.'];
+  if (!res || !Array.isArray(res.organic) || res.organic.length === 0) {
+    return freeWebsiteFallback(name);
+  }
   for (const o of res.organic) {
-    const link = o.link || '';
-    const host = hostOf(link);
+    const host = hostOf(o.link || '');
     if (!host) continue;
-    if (bad.some((b) => host.includes(b))) continue;
+    if (SEARCH_BAD_HOSTS.some((b) => host.includes(b))) continue;
     return 'https://' + host;
   }
-  return '';
+  return freeWebsiteFallback(name);
 }
 
 // Noise strings seen in logo alt / headings that are not organization names.
@@ -302,6 +420,9 @@ async function executeDiscoverTask(domainArg, chatId, sendTelegramMessage) {
       }
     } catch (e) { /* enrichment best-effort */ }
 
+    // Space out requests: the free DuckDuckGo fallback blocks bursts aggressively.
+    await sleep(7000);
+
     const res = await httpRequest(`${CSR_API_BASE_URL}/organizations/ingest`, {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${OPENCLAW_AGENT_TOKEN}`, 'Content-Type': 'application/json' },
@@ -334,4 +455,4 @@ async function executeDiscoverTask(domainArg, chatId, sendTelegramMessage) {
   return { discovered: names.length, inserted, filled, failed };
 }
 
-module.exports = { executeDiscoverTask, scrapeMembers };
+module.exports = { executeDiscoverTask, scrapeMembers, discoverWebsite, discoverWebsiteGuess, discoverEmail, discoverPhone };
