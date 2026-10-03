@@ -782,4 +782,45 @@ func (h *AIAgentHandler) IngestOrganization(c *fiber.Ctx) error {
 	})
 }
 
+// ListOrganizationsMissingContacts handles GET /api/v1/ai/organizations/missing-contacts.
+// Returns organizations whose contact_email OR contact_phone is empty, so the OpenClaw
+// /enrich agent can re-enrich only the ones that still need it.
+func (h *AIAgentHandler) ListOrganizationsMissingContacts(c *fiber.Ctx) error {
+	if h.dbPool == nil {
+		return c.Status(503).JSON(fiber.Map{"error": "database unavailable"})
+	}
+	limit, _ := strconv.Atoi(c.Query("limit", "200"))
+	if limit <= 0 || limit > 1000 {
+		limit = 200
+	}
+	rows, err := h.dbPool.Query(c.Context(), `
+		SELECT name,
+		       COALESCE(contact_email,'') AS email,
+		       COALESCE(contact_phone,'') AS phone
+		FROM organizations
+		WHERE deleted_at IS NULL
+		  AND (contact_email IS NULL OR btrim(contact_email) = ''
+		    OR contact_phone IS NULL OR btrim(contact_phone) = '')
+		ORDER BY created_at DESC
+		LIMIT $1
+	`, limit)
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+	defer rows.Close()
+
+	out := make([]fiber.Map, 0)
+	for rows.Next() {
+		var name, email, phone string
+		if err := rows.Scan(&name, &email, &phone); err == nil {
+			out = append(out, fiber.Map{
+				"name":       name,
+				"has_email":  email != "",
+				"has_phone":  phone != "",
+			})
+		}
+	}
+	return c.JSON(fiber.Map{"data": out, "count": len(out)})
+}
+
 

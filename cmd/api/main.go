@@ -238,6 +238,8 @@ func main() {
 	aiGroup.Post("/companies/:id/enrich", aiAgentHandler.EnrichCompany)
 	aiGroup.Post("/matching", aiAgentHandler.MatchProgram)
 	aiGroup.Post("/organizations/ingest", aiAgentHandler.IngestOrganization)
+	aiGroup.Get("/organizations/missing-contacts", aiAgentHandler.ListOrganizationsMissingContacts)
+	aiGroup.Post("/companies/enrich-contacts-batch", companyHandler.TriggerBatchContactDiscovery)
 	aiGroup.Get("/search", aiAgentHandler.SearchCorporateData)
 
 	// Granular Tool API Surface (§4.4)

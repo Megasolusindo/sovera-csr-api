@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/hibiken/asynq"
 
 	"sovera-core-api/internal/model"
 	"sovera-core-api/internal/pkg/phoneverifier"
@@ -64,6 +65,33 @@ func (h *CompanyHandler) ListCompanies(c *fiber.Ctx) error {
 			"offset": offset,
 		},
 		"stats": stats,
+	})
+}
+
+// GetWebsiteStats returns website validation statistics for companies.
+func (h *CompanyHandler) GetWebsiteStats(c *fiber.Ctx) error {
+	stats, err := h.repo.GetWebsiteValidationStats(c.Context())
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"success": false,
+			"error":   "QUERY_FAILED",
+			"message": err.Error(),
+		})
+	}
+	
+	// Create a format that matches what telegram bot expects
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{
+		"success": true,
+		"total": stats.TotalCompanies,
+		"stats": fiber.Map{
+			"total_failing": stats.InvalidCount,
+			"healthy_count": stats.ValidCount,
+			"has_website": stats.HasWebsite,
+			"unverified_count": stats.UnverifiedCount,
+			"http_404_dead_links": stats.Http404DeadLinks,
+			"http_429_rate_limited": stats.Http429RateLimited,
+			"http_500_server_errors": stats.Http500ServerErrors,
+		},
 	})
 }
 
@@ -241,6 +269,7 @@ type CreateCompanyPayload struct {
 	IndustrySector string   `json:"industry_sector"`
 	CompanyType    string   `json:"company_type"`
 	Website        string   `json:"website,omitempty"`
+	WebsiteStatus  string   `json:"website_status,omitempty"`
 	LinkedinURL     string   `json:"linkedin_url,omitempty"`
 	LinkedinStatus  string   `json:"linkedin_status,omitempty"`
 	InstagramURL    string   `json:"instagram_url,omitempty"`
@@ -252,6 +281,9 @@ type CreateCompanyPayload struct {
 	Headquarters    string   `json:"headquarters,omitempty"`
 	Phone           string   `json:"phone,omitempty"`
 	ContactPhone    string   `json:"contact_phone,omitempty"`
+	Email           string   `json:"email,omitempty"`
+	EmailStatus     string   `json:"email_status,omitempty"`
+	ContactEmail    string   `json:"contact_email,omitempty"`
 	Ticker          string   `json:"ticker,omitempty"`
 	PriorityTier    string   `json:"priority_tier,omitempty"`
 	AliasKeywords   []string `json:"alias_keywords,omitempty"`
@@ -479,12 +511,32 @@ func (h *CompanyHandler) UpdateCompany(c *fiber.Ctx) error {
 		headquarters = &payload.Headquarters
 	}
 
+	rawEmail := payload.Email
+	if rawEmail == "" {
+		rawEmail = payload.ContactEmail
+	}
+	var email *string
+	if rawEmail != "" {
+		email = &rawEmail
+	}
+
+	var emailStatus *string
+	if payload.EmailStatus != "" {
+		emailStatus = &payload.EmailStatus
+	}
+
+	var websiteStatus *string
+	if payload.WebsiteStatus != "" {
+		websiteStatus = &payload.WebsiteStatus
+	}
+
 	comp := model.Company{
 		Name:            payload.Name,
 		LegalName:       legalName,
 		IndustrySector:  payload.IndustrySector,
 		CompanyType:     payload.CompanyType,
 		Website:         website,
+		WebsiteStatus:   websiteStatus,
 		LinkedinURL:     linkedinURL,
 		LinkedinStatus:  linkedinStatus,
 		InstagramURL:    instagramURL,
@@ -495,6 +547,8 @@ func (h *CompanyHandler) UpdateCompany(c *fiber.Ctx) error {
 		YoutubeStatus:   youtubeStatus,
 		Headquarters:    headquarters,
 		Phone:           phone,
+		Email:           email,
+		EmailStatus:     emailStatus,
 		Ticker:          ticker,
 		PriorityTier:    payload.PriorityTier,
 	}
@@ -536,7 +590,7 @@ func (h *CompanyHandler) TriggerBatchLinkedInVerification(c *fiber.Ctx) error {
 	go func() {
 		if h.repo != nil && h.repo.GetDBPool() != nil {
 			_, _ = h.repo.GetDBPool().Exec(context.Background(), `
-				UPDATE companies 
+				UPDATE company.companies 
 				SET linkedin_verified_at = NULL, linkedin_status = 'UNVERIFIED' 
 				WHERE linkedin_url IS NOT NULL AND linkedin_url <> ''
 			`)
@@ -641,6 +695,60 @@ func (h *CompanyHandler) TriggerBatchInstagramDiscovery(c *fiber.Ctx) error {
 	return c.Status(fiber.StatusAccepted).JSON(fiber.Map{
 		"success": true,
 		"message": "Batch company Instagram discovery task triggered in background",
+	})
+}
+
+// TriggerBatchWebsiteDiscovery handles POST /api/v1/url/discover-website-batch
+func (h *CompanyHandler) TriggerBatchWebsiteDiscovery(c *fiber.Ctx) error {
+	redisUrl := os.Getenv("REDIS_URL")
+	if redisUrl == "" {
+		redisUrl = "redis://sovera_redis:6379"
+	}
+	
+	asynqClient := asynq.NewClient(asynq.RedisClientOpt{Addr: redisUrl})
+	defer asynqClient.Close()
+	
+	task, err := queue.NewEnrichMissingWebsitesTask()
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "Failed to create missing websites enrichment task",
+		})
+	}
+	
+	_, err = asynqClient.Enqueue(task)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "Failed to enqueue missing websites enrichment task to Redis",
+		})
+	}
+
+	return c.Status(fiber.StatusAccepted).JSON(fiber.Map{
+		"success": true,
+		"message": "Batch company website enrichment task triggered in background",
+	})
+}
+
+// TriggerBatchContactDiscovery handles POST /api/v1/ai/companies/enrich-contacts-batch.
+// It enqueues the contact-discovery worker that fills missing website/email/phone/HQ
+// for companies (the same worker the hourly cron runs), so /enrich company can trigger it.
+func (h *CompanyHandler) TriggerBatchContactDiscovery(c *fiber.Ctx) error {
+	redisUrl := os.Getenv("REDIS_URL")
+	if redisUrl == "" {
+		redisUrl = "redis://sovera_redis:6379"
+	}
+	asynqClient := asynq.NewClient(asynq.RedisClientOpt{Addr: redisUrl})
+	defer asynqClient.Close()
+
+	task, err := queue.NewCompanyContactDiscoveryBatchTask()
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to create contact discovery task"})
+	}
+	if _, err = asynqClient.Enqueue(task); err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to enqueue contact discovery task"})
+	}
+	return c.Status(fiber.StatusAccepted).JSON(fiber.Map{
+		"success": true,
+		"message": "Batch company contact enrichment (website, email, phone) triggered in background",
 	})
 }
 
