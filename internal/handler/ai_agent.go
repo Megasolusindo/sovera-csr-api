@@ -1,8 +1,11 @@
 package handler
 
 import (
+	"context"
 	"fmt"
 	"net/url"
+	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -738,10 +741,19 @@ func (h *AIAgentHandler) IngestOrganization(c *fiber.Ctx) error {
 	ctx := c.Context()
 
 	// Does an organization with this name already exist?
+	// First try an exact (case-insensitive) match, then a fuzzy name-key match so
+	// variants like "Rumah Zakat" vs "Rumah Zakat Indonesia", or "LAZ Solo Peduli"
+	// vs "SOLOPEDULI (LAZ Provinsi)", are treated as the same org (no duplicate).
 	var existingID string
 	err := h.dbPool.QueryRow(ctx,
 		`SELECT id::text FROM organizations WHERE lower(name)=lower($1) AND deleted_at IS NULL LIMIT 1`,
 		req.Name).Scan(&existingID)
+	if err != nil {
+		if fuzzyID := h.findExistingOrgByFuzzyName(ctx, req.Name); fuzzyID != "" {
+			existingID = fuzzyID
+			err = nil
+		}
+	}
 
 	if err != nil {
 		// Not found -> insert new.
@@ -821,6 +833,68 @@ func (h *AIAgentHandler) ListOrganizationsMissingContacts(c *fiber.Ctx) error {
 		}
 	}
 	return c.JSON(fiber.Map{"data": out, "count": len(out)})
+}
+
+// orgNameNonAlnum and orgNameStopWords support fuzzy duplicate detection for orgs.
+var orgNameNonAlnum = regexp.MustCompile(`[^a-z0-9 ]`)
+var orgNameMultiSpace = regexp.MustCompile(` +`)
+var orgNameStopWords = map[string]bool{
+	"laz": true, "laznas": true, "yayasan": true, "foundation": true, "indonesia": true,
+	"the": true, "dan": true, "and": true, "perkumpulan": true, "lembaga": true,
+	"nasional": true, "propinsi": true, "provinsi": true, "cabang": true, "pusat": true,
+	"amil": true, "zakat": true, "infaq": true, "shadaqah": true, "institute": true,
+	"center": true, "centre": true,
+}
+
+// orgNameKey normalizes an organization name into a sorted set of distinctive
+// tokens, so "Rumah Zakat" and "Rumah Zakat Indonesia", or "LAZ Solo Peduli" and
+// "SOLOPEDULI (LAZ Provinsi)"-style variants collapse to the same key. Returns ""
+// when nothing distinctive remains (callers then fall back to exact matching).
+func orgNameKey(name string) string {
+	l := strings.ToLower(name)
+	l = strings.ReplaceAll(l, "&", " ")
+	// drop parenthetical segments
+	for {
+		i := strings.Index(l, "(")
+		j := strings.Index(l, ")")
+		if i >= 0 && j > i {
+			l = l[:i] + " " + l[j+1:]
+		} else {
+			break
+		}
+	}
+	l = orgNameNonAlnum.ReplaceAllString(l, " ")
+	l = orgNameMultiSpace.ReplaceAllString(strings.TrimSpace(l), " ")
+	toks := []string{}
+	for _, t := range strings.Fields(l) {
+		if !orgNameStopWords[t] && len(t) > 2 {
+			toks = append(toks, t)
+		}
+	}
+	sort.Strings(toks)
+	return strings.Join(toks, " ")
+}
+
+// findExistingOrgByFuzzyName returns the id of an active organization whose
+// normalized name key matches the given name, or "" if none. It compares against
+// all active orgs in Go (the set is small, a few hundred rows).
+func (h *AIAgentHandler) findExistingOrgByFuzzyName(ctx context.Context, name string) string {
+	key := orgNameKey(name)
+	if key == "" {
+		return ""
+	}
+	rows, err := h.dbPool.Query(ctx, `SELECT id::text, name FROM organizations WHERE deleted_at IS NULL`)
+	if err != nil {
+		return ""
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, existing string
+		if rows.Scan(&id, &existing) == nil && orgNameKey(existing) == key {
+			return id
+		}
+	}
+	return ""
 }
 
 
