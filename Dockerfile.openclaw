@@ -1,15 +1,21 @@
-FROM node:20-alpine
+FROM node:20-slim
 
 WORKDIR /app
 
-# Install Python3, pip, build dependencies for psycopg2 and cloudscraper
-RUN apk add --no-cache python3 py3-pip build-base python3-dev postgresql-dev
+# Debian base (glibc) so Playwright/Chromium can run — Alpine/musl cannot.
+# Install Python3, pip, build deps for psycopg2/cloudscraper, plus base libs.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 python3-pip python3-dev build-essential libpq-dev ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 
 # Install python libraries for live IDX scraper
 RUN pip3 install --no-cache-dir --break-system-packages cloudscraper psycopg2-binary
 
 COPY openclaw/package.json ./
 RUN npm install --omit=dev
+
+# Install the Chromium browser used by the /discover skill, with its OS deps.
+RUN npx playwright install --with-deps chromium
 
 # Copy scripts directory to root /scripts and /app/scripts
 COPY scripts/ /scripts/

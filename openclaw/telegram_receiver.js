@@ -13,6 +13,7 @@ const { executeMatchingTask } = require('./skills/matching_skill');
 const { verifyLinkedInURL, triggerBatchCompanyLinkedInVerification, triggerBatchCompanyLinkedInDiscovery, getCompanyLinkedInStats } = require('./skills/linkedin_verifier_skill');
 const { verifyInstagramURL, triggerBatchCompanyInstagramVerification, triggerBatchCompanyInstagramDiscovery, getCompanyInstagramStats } = require('./skills/instagram_verifier_skill');
 const { triggerLiveIDXSync } = require('./skills/idx_sync_skill');
+const { executeDiscoverTask } = require('./skills/discover_skill');
 
 const { sendTelegramMessage, registerTelegramBotCommands, sendTelegramSupportDraftReview } = require('./telegram');
 
@@ -917,7 +918,7 @@ async function processCommand(text, chatId) {
   }
 
   // 6. System Stats Intent (Hari ini, Kemarin, Total, Lembaga/Organisasi)
-  if (trimmed.startsWith('/stats') || lower.includes('statistik feed') || lower.includes('feed stats') || lower.includes('berapa data') || lower.includes('statistik') || lower.includes('status crawler') || lower.includes('berapa signal') || lower.includes('berapa crawling') || lower.includes('berapa lembaga') || lower.includes('berapa organisasi') || lower.includes('total lembaga') || lower.includes('total organisasi')) {
+  if (trimmed.startsWith('/stats') || lower.includes('statistik feed') || lower.includes('feed stats') || lower.includes('berapa data') || lower.includes('statistik') || lower.includes('status crawler') || lower.includes('berapa signal') || lower.includes('berapa crawling') || lower.includes('berapa lembaga') || lower.includes('berapa organisasi') || lower.includes('total lembaga') || lower.includes('total organisasi') || lower.includes('berapa feed') || lower.includes('jumlah feed') || (lower.includes('feed') && (lower.includes('hari ini') || lower.includes('kemarin')))) {
     const stats = await fetchLiveSystemStats();
     if (!stats) {
       await sendTelegramMessage(
@@ -1049,6 +1050,22 @@ async function processCommand(text, chatId) {
     } catch (err) {
       await sendTelegramMessage(`❌ <i>Error: ${err.message}</i>`, chatId);
     }
+    return;
+  }
+
+  // Humanitarian organization discovery: /discover <domain-or-url>
+  // Guard: match "/discover " or exactly "/discover", but NOT "/discover_website" etc.
+  if ((trimmed === '/discover' || trimmed.startsWith('/discover ')) && !trimmed.startsWith('/discover_')) {
+    const arg = trimmed.slice('/discover'.length).trim();
+    if (!arg) {
+      await sendTelegramMessage(`ℹ️ <b>Cara pakai:</b> <code>/discover &lt;domain&gt;</code>\nContoh: <code>/discover filantropi.or.id</code>\n\nSaya akan memindai direktori lembaga di situs itu, meng-enrich website/email/no HP, lalu menyimpan ke tabel organizations.`, chatId);
+      return;
+    }
+    await sendTelegramMessage(`🚀 <b>Discovery diterima (202).</b>\nMemproses <code>${arg}</code> di background — Anda akan menerima update progres & ringkasan akhir di sini.`, chatId);
+    // Fire-and-forget: run in background so the receiver loop is not blocked.
+    executeDiscoverTask(arg, chatId, sendTelegramMessage).catch((err) => {
+      sendTelegramMessage(`❌ <i>Discovery gagal: ${err.message}</i>`, chatId).catch(() => {});
+    });
     return;
   }
 

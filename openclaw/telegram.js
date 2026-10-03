@@ -207,14 +207,14 @@ async function registerTelegramBotCommands() {
     { command: "watchlist", description: "Lihat & kelola daftar perusahaan dipantau" },
     { command: "check_linkedin", description: "Verifikasi keaktifan URL LinkedIn" },
     { command: "discover_linkedin", description: "Pencarian empiris LinkedIn perusahaan INVALID" },
-    { command: "linkedin_stats", description: "Lihat statistik audit LinkedIn seluruh perusahaan" },
     { command: "check_instagram", description: "Verifikasi keaktifan URL Instagram" },
     { command: "discover_instagram", description: "Pencarian empiris Instagram perusahaan INVALID" },
-    { command: "instagram_stats", description: "Lihat statistik audit Instagram seluruh perusahaan" },
     { command: "sync_idx", description: "Sinkronisasi real data emiten resmi dari IDX (BEI)" },
     { command: "feed", description: "Pemicu instant sweep & tampilkan feed CSR terbaru" },
     { command: "signals", description: "Tampilkan sinyal & feed CSR terbaru" },
-    { command: "stats", description: "Lihat statistik real-time system of record & crawler" }
+    { command: "discover_website", description: "Pencarian otomatis URL website perusahaan kosong" },
+    { command: "discover", description: "Temukan lembaga dari direktori situs (e.g. /discover filantropi.or.id)" },
+    { command: "stats", description: "Lihat statistik system, /stats linkedin, /stats instagram, /stats website" }
   ];
 
   const postData = JSON.stringify({ commands: commandsList });
@@ -254,11 +254,100 @@ async function registerTelegramBotCommands() {
     req.end();
   });
 }
+function escapeHTML(str) {
+  if (!str) return '';
+  return str.toString()
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+/**
+ * Send an interactive review message for Customer Support Drafts
+ */
+async function sendTelegramSupportDraftReview(draftData, destChatId = null) {
+  if (!TELEGRAM_BOT_TOKEN) return false;
+  const chatId = destChatId || TELEGRAM_CHAT_ID;
+  const targetIp = await getTelegramIp();
+
+  const title = `🎫 <b>CUSTOMER SUPPORT DRAFT REVIEW</b>`;
+  const message = `${title}
+
+<b>Ticket ID:</b> <code>${draftData.ticket_id}</code>
+<b>Intent:</b> ${draftData.intent} (Conf: ${draftData.confidence})
+<b>Subject:</b> ${escapeHTML(draftData.subject)}
+
+<b>User Message:</b>
+<i>"${escapeHTML(draftData.body.substring(0, 300))}${draftData.body.length > 300 ? '...' : ''}"</i>
+
+<b>AI Draft Reply:</b>
+<code>${escapeHTML(draftData.draft_text)}</code>
+
+<b>Sources Used:</b> ${escapeHTML(draftData.sources.join(', ')) || 'None'}`;
+
+  const postDataPayload = {
+    chat_id: chatId,
+    text: message,
+    parse_mode: 'HTML',
+    disable_web_page_preview: true,
+    reply_markup: {
+      inline_keyboard: [
+        [
+          { text: "✅ Approve & Send", callback_data: `draft_approve:${draftData.ticket_id}` },
+          { text: "✏️ Edit Draft", callback_data: `draft_edit:${draftData.ticket_id}` }
+        ],
+        [
+          { text: "❌ Reject / Human Escalate", callback_data: `draft_reject:${draftData.ticket_id}` }
+        ]
+      ]
+    }
+  };
+
+  const postData = JSON.stringify(postDataPayload);
+
+  return new Promise((resolve) => {
+    const options = {
+      hostname: targetIp,
+      port: 443,
+      path: `/bot${TELEGRAM_BOT_TOKEN}/sendMessage`,
+      method: 'POST',
+      servername: 'api.telegram.org',
+      headers: {
+        'Host': 'api.telegram.org',
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(postData)
+      }
+    };
+
+    const req = https.request(options, (res) => {
+      let body = '';
+      res.on('data', (chunk) => body += chunk);
+      res.on('end', () => {
+        if (res.statusCode === 200) {
+          console.log(`[OpenClaw Telegram] ✅ Support Draft Review sent for Ticket: ${draftData.ticket_id}`);
+          resolve(true);
+        } else {
+          console.error(`[OpenClaw Telegram] ❌ Telegram API status ${res.statusCode}:`, body);
+          resolve(false);
+        }
+      });
+    });
+
+    req.on('error', (err) => {
+      console.error('[OpenClaw Telegram] Error sending review message:', err.message);
+      resolve(false);
+    });
+
+    req.write(postData);
+    req.end();
+  });
+}
 
 module.exports = {
   sendTelegramMessage,
   notifyNewFinding,
   notifyMatchingResult,
-  registerTelegramBotCommands
+  registerTelegramBotCommands,
+  sendTelegramSupportDraftReview
 };
 
