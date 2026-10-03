@@ -214,6 +214,7 @@ async function registerTelegramBotCommands() {
     { command: "signals", description: "Tampilkan sinyal & feed CSR terbaru" },
     { command: "discover_website", description: "Pencarian otomatis URL website perusahaan kosong" },
     { command: "discover", description: "Temukan lembaga dari direktori situs (e.g. /discover filantropi.or.id)" },
+    { command: "enrich", description: "Lengkapi kontak kosong: /enrich company atau /enrich filantropi" },
     { command: "stats", description: "Lihat statistik system, /stats linkedin, /stats instagram, /stats website" }
   ];
 

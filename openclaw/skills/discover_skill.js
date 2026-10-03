@@ -455,4 +455,68 @@ async function executeDiscoverTask(domainArg, chatId, sendTelegramMessage) {
   return { discovered: names.length, inserted, filled, failed };
 }
 
-module.exports = { executeDiscoverTask, scrapeMembers, discoverWebsite, discoverWebsiteGuess, discoverEmail, discoverPhone };
+// Re-enrich organizations already in the DB that still have empty contact fields.
+// Does NOT scrape any directory — it pulls the missing list from the API and tries to
+// fill website/email/phone via the same verified-only pipeline (Serper -> DDG -> guess).
+async function executeEnrichOrganizations(chatId, sendTelegramMessage) {
+  const send = (msg) => (sendTelegramMessage ? sendTelegramMessage(msg, chatId) : Promise.resolve());
+
+  const listRes = await httpRequest(`${CSR_API_BASE_URL}/organizations/missing-contacts?limit=500`, {
+    headers: { 'Authorization': `Bearer ${OPENCLAW_AGENT_TOKEN}` },
+  });
+  if (listRes.statusCode < 200 || listRes.statusCode >= 300 || !listRes.data || !Array.isArray(listRes.data.data)) {
+    await send(`❌ <i>Gagal mengambil daftar organisasi yang perlu enrichment (HTTP ${listRes.statusCode}).</i>`);
+    return { total: 0, enriched: 0 };
+  }
+  const targets = listRes.data.data;
+  if (targets.length === 0) {
+    await send(`✅ <i>Semua organisasi sudah memiliki email & no HP. Tidak ada yang perlu di-enrich.</i>`);
+    return { total: 0, enriched: 0 };
+  }
+
+  await send(`🔧 <b>OpenClaw Enrichment Organisasi</b>\nMelengkapi kontak untuk <b>${targets.length}</b> lembaga yang masih kosong (via tebak-domain, tanpa Serper). Ini perlu waktu…`);
+
+  let gotEmail = 0, gotPhone = 0, touched = 0, failed = 0;
+  for (let i = 0; i < targets.length; i++) {
+    const name = targets[i].name;
+    let website = '', email = '', phone = '';
+    try {
+      website = await discoverWebsite(name);
+      if (website) {
+        if (!targets[i].has_email) email = await discoverEmail(website);
+        if (!targets[i].has_phone) phone = await discoverPhone(website);
+      }
+    } catch (e) { /* best-effort */ }
+
+    if (email || phone) {
+      const res = await httpRequest(`${CSR_API_BASE_URL}/organizations/ingest`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${OPENCLAW_AGENT_TOKEN}`, 'Content-Type': 'application/json' },
+      }, { name, website, email, phone });
+      if (res.statusCode >= 200 && res.statusCode < 300 && res.data && res.data.success) {
+        touched++;
+        if (email) gotEmail++;
+        if (phone) gotPhone++;
+      } else {
+        failed++;
+      }
+    }
+
+    if ((i + 1) % 25 === 0) {
+      await send(`⏳ Progres: <b>${i + 1}/${targets.length}</b> — terisi email: ${gotEmail}, HP: ${gotPhone}.`);
+    }
+    await sleep(7000); // space out free-fallback requests
+  }
+
+  await send(
+    `🏁 <b>Enrichment Organisasi Selesai</b>\n\n` +
+    `• Diproses          : <b>${targets.length}</b>\n` +
+    `• Terisi email baru  : <b>${gotEmail}</b>\n` +
+    `• Terisi no HP baru  : <b>${gotPhone}</b>\n` +
+    `• Gagal simpan      : <b>${failed}</b>\n\n` +
+    `<i>Hanya data terverifikasi yang disimpan; field yang sudah terisi tidak ditimpa.</i>`
+  );
+  return { total: targets.length, enriched: touched };
+}
+
+module.exports = { executeDiscoverTask, executeEnrichOrganizations, scrapeMembers, discoverWebsite, discoverWebsiteGuess, discoverEmail, discoverPhone };

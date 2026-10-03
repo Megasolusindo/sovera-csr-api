@@ -13,7 +13,7 @@ const { executeMatchingTask } = require('./skills/matching_skill');
 const { verifyLinkedInURL, triggerBatchCompanyLinkedInVerification, triggerBatchCompanyLinkedInDiscovery, getCompanyLinkedInStats } = require('./skills/linkedin_verifier_skill');
 const { verifyInstagramURL, triggerBatchCompanyInstagramVerification, triggerBatchCompanyInstagramDiscovery, getCompanyInstagramStats } = require('./skills/instagram_verifier_skill');
 const { triggerLiveIDXSync } = require('./skills/idx_sync_skill');
-const { executeDiscoverTask } = require('./skills/discover_skill');
+const { executeDiscoverTask, executeEnrichOrganizations } = require('./skills/discover_skill');
 
 const { sendTelegramMessage, registerTelegramBotCommands, sendTelegramSupportDraftReview } = require('./telegram');
 
@@ -1050,6 +1050,37 @@ async function processCommand(text, chatId) {
     } catch (err) {
       await sendTelegramMessage(`❌ <i>Error: ${err.message}</i>`, chatId);
     }
+    return;
+  }
+
+  // Enrichment command: /enrich company | /enrich filantropi (alias: organisasi/org/lembaga)
+  if (trimmed === '/enrich' || trimmed.startsWith('/enrich ')) {
+    const arg = trimmed.slice('/enrich'.length).trim().toLowerCase();
+    if (arg === 'company' || arg === 'perusahaan' || arg === 'companies') {
+      await sendTelegramMessage(`🚀 <b>Enrichment Perusahaan diterima (202).</b>\nWorker akan melengkapi website, email & no HP perusahaan yang masih kosong di background.`, chatId);
+      try {
+        const res = await httpRequest(`${CSR_API_BASE_URL}/companies/enrich-contacts-batch`, {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${OPENCLAW_AGENT_TOKEN}` },
+        });
+        if (res.statusCode >= 200 && res.statusCode < 300) {
+          await sendTelegramMessage(`✅ <b>Task enrichment perusahaan berjalan.</b> Worker Asynq sedang mengisi kontak perusahaan satu per satu.`, chatId);
+        } else {
+          await sendTelegramMessage(`⚠️ <i>Gagal memicu enrichment perusahaan (HTTP ${res.statusCode}).</i>`, chatId);
+        }
+      } catch (err) {
+        await sendTelegramMessage(`❌ <i>Error: ${err.message}</i>`, chatId);
+      }
+      return;
+    }
+    if (arg === 'filantropi' || arg === 'organisasi' || arg === 'org' || arg === 'lembaga' || arg === 'ngo') {
+      await sendTelegramMessage(`🚀 <b>Enrichment Organisasi diterima (202).</b>\nMelengkapi kontak lembaga yang masih kosong di background — progres & ringkasan akan dikirim ke sini.`, chatId);
+      executeEnrichOrganizations(chatId, sendTelegramMessage).catch((err) => {
+        sendTelegramMessage(`❌ <i>Enrichment organisasi gagal: ${err.message}</i>`, chatId).catch(() => {});
+      });
+      return;
+    }
+    await sendTelegramMessage(`ℹ️ <b>Cara pakai:</b>\n• <code>/enrich company</code> — lengkapi kontak perusahaan yang kosong\n• <code>/enrich filantropi</code> — lengkapi kontak lembaga/organisasi yang kosong`, chatId);
     return;
   }
 
