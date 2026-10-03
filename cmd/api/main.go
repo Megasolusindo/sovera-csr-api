@@ -358,6 +358,7 @@ func main() {
 	apiV1.Post("/corporate/claims", jwtGuard, claimHandler.SubmitClaim)
 	apiV1.Post("/corporate/opportunities", jwtGuard, oppHandler.CreateOpportunity)
 	apiV1.Get("/public/opportunities", oppHandler.ListOpportunities)
+	apiV1.Get("/public/stats", ipLimit, adminHandler.GetPublicStats)
 	apiV1.Get("/opportunities", oppHandler.ListOpportunities)
 
 	apiV1.Post("/proposals", jwtGuard, proposalHandler.SubmitProposal)

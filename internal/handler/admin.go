@@ -278,13 +278,20 @@ func (h *AdminHandler) GetAnalytics(c *fiber.Ctx) error {
 		_ = h.dbPool.QueryRow(c.UserContext(), "SELECT COUNT(*) FROM companies").Scan(&totalCompanies)
 	}
 
-	_ = h.dbPool.QueryRow(c.UserContext(), "SELECT COUNT(*) FROM intelligence.company_signals").Scan(&totalSignals)
+	_ = h.dbPool.QueryRow(c.UserContext(), "SELECT COUNT(*) FROM public.corporate_signals").Scan(&totalSignals)
 	if totalSignals == 0 {
-		_ = h.dbPool.QueryRow(c.UserContext(), "SELECT COUNT(*) FROM public_corporate_signals").Scan(&totalSignals)
+		_ = h.dbPool.QueryRow(c.UserContext(), "SELECT COUNT(*) FROM intelligence.company_signals").Scan(&totalSignals)
 	}
 
-	_ = h.dbPool.QueryRow(c.UserContext(), "SELECT COUNT(*) FROM public_corporate_signals WHERE created_at >= CURRENT_DATE").Scan(&signalsToday)
-	_ = h.dbPool.QueryRow(c.UserContext(), "SELECT COUNT(*) FROM public_corporate_signals WHERE created_at >= CURRENT_DATE - INTERVAL '1 day' AND created_at < CURRENT_DATE").Scan(&signalsYesterday)
+	_ = h.dbPool.QueryRow(c.UserContext(), "SELECT COUNT(*) FROM public.corporate_signals WHERE created_at >= CURRENT_DATE").Scan(&signalsToday)
+	if signalsToday == 0 {
+		_ = h.dbPool.QueryRow(c.UserContext(), "SELECT COUNT(*) FROM intelligence.company_signals WHERE created_at >= CURRENT_DATE").Scan(&signalsToday)
+	}
+
+	_ = h.dbPool.QueryRow(c.UserContext(), "SELECT COUNT(*) FROM public.corporate_signals WHERE created_at >= CURRENT_DATE - INTERVAL '1 day' AND created_at < CURRENT_DATE").Scan(&signalsYesterday)
+	if signalsYesterday == 0 {
+		_ = h.dbPool.QueryRow(c.UserContext(), "SELECT COUNT(*) FROM intelligence.company_signals WHERE created_at >= CURRENT_DATE - INTERVAL '1 day' AND created_at < CURRENT_DATE").Scan(&signalsYesterday)
+	}
 
 	_ = h.dbPool.QueryRow(c.UserContext(), "SELECT COUNT(*) FROM public.organizations").Scan(&totalOrgs)
 	if totalOrgs == 0 {
@@ -320,6 +327,33 @@ func (h *AdminHandler) GetAnalytics(c *fiber.Ctx) error {
 			"system_health":             "OPERATIONAL",
 			"sla_uptime":                "99.98%",
 		},
+	})
+}
+
+// GetPublicStats handles GET /api/v1/public/stats — unauthenticated, returns only
+// aggregate, non-sensitive counts used by the public landing page (no per-record data).
+func (h *AdminHandler) GetPublicStats(c *fiber.Ctx) error {
+	if h.dbPool == nil {
+		return c.Status(503).JSON(fiber.Map{"error": "database unavailable"})
+	}
+	var totalCompanies, totalOrgs, totalPrograms int
+
+	_ = h.dbPool.QueryRow(c.UserContext(), "SELECT COUNT(*) FROM company.companies").Scan(&totalCompanies)
+	if totalCompanies == 0 {
+		_ = h.dbPool.QueryRow(c.UserContext(), "SELECT COUNT(*) FROM companies").Scan(&totalCompanies)
+	}
+
+	_ = h.dbPool.QueryRow(c.UserContext(), "SELECT COUNT(*) FROM public.organizations WHERE deleted_at IS NULL").Scan(&totalOrgs)
+	if totalOrgs == 0 {
+		_ = h.dbPool.QueryRow(c.UserContext(), "SELECT COUNT(*) FROM organizations WHERE deleted_at IS NULL").Scan(&totalOrgs)
+	}
+
+	_ = h.dbPool.QueryRow(c.UserContext(), "SELECT COUNT(*) FROM company_enriched_programs").Scan(&totalPrograms)
+
+	return c.JSON(fiber.Map{
+		"total_companies":     totalCompanies,
+		"total_organizations": totalOrgs,
+		"total_programs":      totalPrograms,
 	})
 }
 
@@ -523,7 +557,7 @@ func (h *AdminHandler) GetCrawlerErrors(c *fiber.Ctx) error {
 		})
 	}
 
-	stats, _ := h.crawlerRepo.GetCrawlerErrorStats(c.UserContext())
+	stats, _ := h.crawlerRepo.GetCrawlerErrorStats(c.UserContext(), sourceType)
 
 	return c.JSON(fiber.Map{
 		"data":  items,
