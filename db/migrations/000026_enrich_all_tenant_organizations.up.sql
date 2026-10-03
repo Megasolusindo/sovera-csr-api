@@ -140,18 +140,25 @@ WHERE ofc.id IS NULL AND o.org_type != 'SYSTEM_ADMIN'
   )
 ON CONFLICT (org_id, focus_id) DO NOTHING;
 
--- 4. Ensure ALL organizations have primary contact in crm_contacts
+-- 4. Seed a primary crm_contact ONLY from a real contact already on the org.
+-- Never synthesize email/phone/name: a fake "@partner-sovera.org" address, a
+-- "Divisi Kemitraan & CSR …" placeholder name, or a RANDOM() phone number would
+-- look real and mislead anyone trying to reach the organization. Orgs without a
+-- real contact are left without a crm_contact (to be enriched later via /enrich).
 INSERT INTO crm_contacts (id, org_id, name, position, email, phone)
-SELECT 
+SELECT
     gen_random_uuid(),
     o.id,
-    COALESCE(o.contact_name, 'Divisi Kemitraan & CSR ' || o.name),
+    o.contact_name,
     'Head of Corporate Partnership',
-    COALESCE(o.contact_email, LOWER(REGEXP_REPLACE(REGEXP_REPLACE(o.name, '[^a-zA-Z0-9]', '', 'g'), ' ', '', 'g')) || '@partner-sovera.org'),
-    COALESCE(o.contact_phone, '+62 812-' || LPAD(FLOOR(RANDOM() * 9000 + 1000)::text, 4, '0') || '-' || LPAD(FLOOR(RANDOM() * 9000 + 1000)::text, 4, '0'))
+    o.contact_email,
+    o.contact_phone
 FROM organizations o
 LEFT JOIN crm_contacts cc ON o.id = cc.org_id
-WHERE cc.id IS NULL AND o.org_type != 'SYSTEM_ADMIN'
+WHERE cc.id IS NULL
+  AND o.org_type != 'SYSTEM_ADMIN'
+  AND o.contact_email IS NOT NULL
+  AND btrim(o.contact_email) <> ''
 ON CONFLICT DO NOTHING;
 
 -- 5. Ensure ALL organizations have organization_prospects CRM record with QUALIFIED status
