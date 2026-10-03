@@ -1,0 +1,337 @@
+/**
+ * OpenClaw AI Agent — Humanitarian Organization Discovery Skill
+ *
+ * Flow (triggered by Telegram `/discover <domain>`):
+ *   1. Scrape the member directory (JS-rendered, Elementor AJAX pagination) with Playwright.
+ *   2. For each organization: enrich website, email, and phone/WhatsApp — VERIFIED ONLY.
+ *   3. Upsert into the organizations table via CSR API (skip-if-exists, fill-empty).
+ *
+ * Quality policy: only store data we can stand behind.
+ *   - email: syntactically valid AND its domain matches the org's own website host.
+ *   - phone: must appear with an explicit +62 / 62 country code near a contact keyword.
+ *   The Go endpoint re-validates the phone with phoneverifier before persisting.
+ */
+
+const http = require('http');
+const https = require('https');
+const { URL } = require('url');
+
+const CSR_API_BASE_URL = process.env.CSR_API_BASE_URL || 'http://api:4000/api/v1/ai';
+const OPENCLAW_AGENT_TOKEN = process.env.OPENCLAW_AGENT_TOKEN || 'openclaw_agent_live_key_998877665544';
+
+// ---- small HTTP helper (same shape as other skills) ----
+function httpRequest(urlStr, options = {}, postData = null) {
+  return new Promise((resolve) => {
+    let parsed;
+    try { parsed = new URL(urlStr); } catch (e) { return resolve({ statusCode: 0, error: e.message }); }
+    const lib = parsed.protocol === 'https:' ? https : http;
+    const reqOptions = {
+      hostname: parsed.hostname,
+      port: parsed.port || (parsed.protocol === 'https:' ? 443 : 80),
+      path: parsed.pathname + parsed.search,
+      method: options.method || 'GET',
+      headers: { 'User-Agent': 'OpenClaw-AI-Agent/1.0', ...options.headers },
+    };
+    const req = lib.request(reqOptions, (res) => {
+      let body = '';
+      res.on('data', (c) => (body += c));
+      res.on('end', () => {
+        try { resolve({ statusCode: res.statusCode, data: JSON.parse(body), raw: body }); }
+        catch (e) { resolve({ statusCode: res.statusCode, raw: body }); }
+      });
+    });
+    req.on('error', (e) => resolve({ statusCode: 0, error: e.message }));
+    req.setTimeout(20000, () => { req.destroy(); resolve({ statusCode: 0, error: 'timeout' }); });
+    if (postData) req.write(typeof postData === 'string' ? postData : JSON.stringify(postData));
+    req.end();
+  });
+}
+
+// ---- contact extraction helpers ----
+const EMAIL_RE = /[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/g;
+// Indonesian phone that carries an explicit country code — the only shape we trust.
+const PHONE_CC_RE = /(?:\+62|62)[\s\-.()]?\d{2,4}(?:[\s\-.()]?\d{2,4}){1,4}/g;
+const CONTACT_KW = ['telp', 'telepon', 'phone', 'whatsapp', 'wa', 'hubungi', 'kontak', 'contact', 'hotline'];
+
+function emailJunk(e) {
+  const l = e.toLowerCase();
+  return ['example.com', 'sentry', 'wixpress', '@2x', '.png', '.jpg', '.svg', '.gif', '.webp',
+    'domain.com', 'yourname', 'u003e', 'react', 'schema.org', 'partner-sovera'].some((b) => l.includes(b));
+}
+function digits(s) { return (s.match(/\d/g) || []).join(''); }
+function normalizeID(raw) {
+  let d = digits(raw);
+  if (d.startsWith('62')) d = '0' + d.slice(2);
+  return d;
+}
+function looksPlaceholderPhone(norm) {
+  let run = 1;
+  for (let i = 1; i < norm.length; i++) {
+    if (norm[i] === norm[i - 1]) { if (++run >= 5) return true; } else run = 1;
+  }
+  if (norm.length >= 9) {
+    const b = norm.slice(-9);
+    if (b.slice(0, 3) === b.slice(3, 6) && b.slice(3, 6) === b.slice(6, 9)) return true;
+  }
+  return false;
+}
+
+function hostOf(u) {
+  try { return new URL(u.startsWith('http') ? u : 'https://' + u).hostname.replace(/^www\./, ''); }
+  catch (e) { return ''; }
+}
+
+// Fetch a page's raw HTML (follows one redirect) for contact scraping.
+function fetchHTML(urlStr) {
+  return new Promise((resolve) => {
+    let parsed;
+    try { parsed = new URL(urlStr.startsWith('http') ? urlStr : 'https://' + urlStr); }
+    catch (e) { return resolve(''); }
+    const lib = parsed.protocol === 'https:' ? https : http;
+    const req = lib.request({
+      hostname: parsed.hostname, port: parsed.port || 443, path: parsed.pathname + parsed.search,
+      method: 'GET', headers: { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/120 Safari/537.36' },
+    }, (res) => {
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        res.resume();
+        return resolve(fetchHTML(new URL(res.headers.location, parsed).href));
+      }
+      if (res.statusCode < 200 || res.statusCode >= 400) { res.resume(); return resolve(''); }
+      let body = '';
+      let size = 0;
+      res.on('data', (c) => { size += c.length; if (size < 900 * 1024) body += c; });
+      res.on('end', () => resolve(body));
+    });
+    req.on('error', () => resolve(''));
+    req.setTimeout(15000, () => { req.destroy(); resolve(''); });
+    req.end();
+  });
+}
+
+// Extract a VERIFIED email (domain must match the site host) from a site.
+async function discoverEmail(website) {
+  if (!website) return '';
+  const host = hostOf(website);
+  const paths = ['', '/contact', '/kontak', '/contact-us', '/hubungi-kami', '/about', '/tentang-kami'];
+  for (const p of paths) {
+    const html = await fetchHTML(website.replace(/\/$/, '') + p);
+    if (!html) continue;
+    const matches = html.match(EMAIL_RE) || [];
+    for (let e of matches) {
+      e = e.replace(/\.$/, '');
+      if (emailJunk(e)) continue;
+      const dom = e.split('@')[1].toLowerCase();
+      // trust only addresses on the org's own domain
+      if (host && (dom === host || dom.endsWith('.' + host))) return e.toLowerCase();
+    }
+  }
+  return '';
+}
+
+// Extract a VERIFIED phone (explicit +62, near a contact keyword) from a site.
+async function discoverPhone(website) {
+  if (!website) return '';
+  const paths = ['/contact', '/kontak', '/contact-us', '/hubungi-kami', ''];
+  for (const p of paths) {
+    const html = await fetchHTML(website.replace(/\/$/, '') + p);
+    if (!html) continue;
+    const lower = html.toLowerCase();
+    let m;
+    PHONE_CC_RE.lastIndex = 0;
+    while ((m = PHONE_CC_RE.exec(html)) !== null) {
+      const start = Math.max(0, m.index - 60);
+      const window = lower.slice(start, m.index + 10);
+      if (!CONTACT_KW.some((kw) => window.includes(kw))) continue;
+      const norm = normalizeID(m[0]);
+      if (norm.length < 9 || norm.length > 13) continue;
+      if (looksPlaceholderPhone(norm)) continue;
+      return norm; // server re-validates with phoneverifier
+    }
+  }
+  return '';
+}
+
+// Guess / confirm an official website for an org using Serper, falling back to none.
+async function discoverWebsite(name) {
+  const key = process.env.SERPER_API_KEY || '';
+  if (!key) return '';
+  const res = await new Promise((resolve) => {
+    const payload = JSON.stringify({ q: `${name} situs resmi`, gl: 'id', hl: 'id', num: 5 });
+    const req = https.request({
+      hostname: 'google.serper.dev', path: '/search', method: 'POST',
+      headers: { 'X-API-KEY': key, 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) },
+    }, (r) => { let b = ''; r.on('data', (c) => (b += c)); r.on('end', () => { try { resolve(JSON.parse(b)); } catch (e) { resolve(null); } }); });
+    req.on('error', () => resolve(null));
+    req.setTimeout(15000, () => { req.destroy(); resolve(null); });
+    req.write(payload); req.end();
+  });
+  if (!res || !Array.isArray(res.organic)) return '';
+  // skip aggregators / social; prefer an org-looking domain
+  const bad = ['facebook.', 'instagram.', 'linkedin.', 'youtube.', 'twitter.', 'x.com', 'wikipedia.', 'tokopedia.', 'detik.', 'kompas.', 'tribunnews.'];
+  for (const o of res.organic) {
+    const link = o.link || '';
+    const host = hostOf(link);
+    if (!host) continue;
+    if (bad.some((b) => host.includes(b))) continue;
+    return 'https://' + host;
+  }
+  return '';
+}
+
+// Noise strings seen in logo alt / headings that are not organization names.
+const NAME_NOISE = [
+  'logo filantropi', 'filantropi indonesia', 'id_id', 'en_us', 'daftar anggota',
+  'anggota filantropi', 'anggota kami', 'keanggotaan', 'berita', 'program',
+  'publikasi', 'tentang', 'kontak', 'beranda', 'menu', 'search', 'pencarian',
+  'ikuti kami', 'alamat', 'berlangganan', 'didukung oleh', 'perusahaan',
+  'klaster filantropi', 'pilar program', 'some rights reserved', 'perhimpunan filantropi',
+  'logo ford foundation', 'hubungi kami', 'copyright', '©',
+];
+function isOrgName(name) {
+  const l = name.toLowerCase().trim();
+  if (l.length < 4) return false;
+  if (NAME_NOISE.some((n) => l === n || l.startsWith(n) || l.includes('rights reserved'))) return false;
+  if (!/[a-z]/i.test(l)) return false;
+  // strip a leading "logo " prefix some alts carry
+  return true;
+}
+function cleanName(raw) {
+  return raw.replace(/\s+/g, ' ').trim().replace(/^logo\s+/i, '').trim();
+}
+
+// ---- scrape the member directory with Playwright ----
+// Pagination links (a.page-numbers) are intercepted by JS and load the next grid via
+// AJAX (the URL does not really change). So we CLICK each page number in order and wait
+// for the grid's first logo to change before collecting. Names come from logo alt text.
+async function scrapeMembers(domainOrUrl, sendProgress) {
+  const { chromium } = require('playwright');
+  const baseList = domainOrUrl.includes('/')
+    ? (domainOrUrl.startsWith('http') ? domainOrUrl : 'https://' + domainOrUrl)
+    : `https://${domainOrUrl}/keanggotaan/anggota-kami/`;
+  const base = baseList.replace(/\/+$/, '') + '/';
+
+  const browser = await chromium.launch({ args: ['--no-sandbox', '--disable-setuid-sandbox'] });
+  const names = [];
+  const seen = new Set();
+  try {
+    const page = await browser.newPage({ userAgent: 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/120 Safari/537.36' });
+    await page.goto(base, { waitUntil: 'networkidle', timeout: 45000 });
+    await page.waitForTimeout(1200);
+
+    let lastPage = 1;
+    try {
+      const nums = await page.$$eval('a.page-numbers, .elementor-pagination a', (els) =>
+        els.map((a) => parseInt((a.textContent || '').trim(), 10)).filter((n) => !isNaN(n)));
+      if (nums.length) lastPage = Math.max(...nums);
+    } catch (e) { /* keep 1 */ }
+    if (lastPage < 1 || lastPage > 100) lastPage = 1;
+
+    // first logo alt on the current grid — used as a change sentinel
+    const firstLogo = () => page.evaluate(() => {
+      const i = [...document.querySelectorAll('img[alt]')].find(
+        (x) => x.alt && x.alt.length > 4 && !/logo filantropi|id_ID|en_US/i.test(x.alt));
+      return i ? i.alt : null;
+    }).catch(() => null);
+
+    const collect = async () => {
+      const found = await page.evaluate(() =>
+        [...document.querySelectorAll('img[alt]')].map((i) => i.alt).filter(Boolean)
+      ).catch(() => []);
+      for (const raw of found) {
+        const name = cleanName(raw);
+        if (!isOrgName(name)) continue;
+        const key = name.toLowerCase();
+        if (!seen.has(key)) { seen.add(key); names.push(name); }
+      }
+    };
+
+    await collect(); // page 1
+    for (let n = 2; n <= lastPage; n++) {
+      const before = await firstLogo();
+      const clicked = await page.evaluate((num) => {
+        const link = [...document.querySelectorAll('a.page-numbers')].find((a) => a.textContent.trim() === String(num));
+        if (link) { link.scrollIntoView(); link.click(); return true; }
+        return false;
+      }, n).catch(() => false);
+      if (!clicked) break;
+      // wait until the grid's first logo changes (AJAX swapped content), max ~8s
+      for (let w = 0; w < 16; w++) {
+        await page.waitForTimeout(500);
+        const now = await firstLogo();
+        if (now && now !== before) break;
+      }
+      await collect();
+      if (sendProgress && n % 5 === 0) await sendProgress(`📄 Memindai halaman ${n}/${lastPage}… total ditemukan: ${names.length}`);
+    }
+  } finally {
+    await browser.close();
+  }
+  return names;
+}
+
+// ---- main entry ----
+async function executeDiscoverTask(domainArg, chatId, sendTelegramMessage) {
+  const send = (msg) => (sendTelegramMessage ? sendTelegramMessage(msg, chatId) : Promise.resolve());
+
+  await send(`🔎 <b>OpenClaw Discovery</b> dimulai untuk <code>${domainArg}</code>.\nMemindai direktori lembaga (JS-rendered)…`);
+
+  let names = [];
+  try {
+    names = await scrapeMembers(domainArg, send);
+  } catch (err) {
+    await send(`❌ <i>Gagal memindai direktori: ${err.message}</i>`);
+    return { discovered: 0, inserted: 0, filled: 0, failed: 0 };
+  }
+
+  if (names.length === 0) {
+    await send(`⚠️ <i>Tidak ada lembaga yang terdeteksi di halaman tersebut.</i>`);
+    return { discovered: 0, inserted: 0, filled: 0, failed: 0 };
+  }
+
+  await send(`✅ Ditemukan <b>${names.length}</b> lembaga. Memulai enrichment (website, email, no HP/WA) & menyimpan ke tabel organizations…`);
+
+  let inserted = 0, filled = 0, failed = 0, withEmail = 0, withPhone = 0;
+  for (let i = 0; i < names.length; i++) {
+    const name = names[i];
+    let website = '', email = '', phone = '';
+    try {
+      website = await discoverWebsite(name);
+      if (website) {
+        email = await discoverEmail(website);
+        phone = await discoverPhone(website);
+      }
+    } catch (e) { /* enrichment best-effort */ }
+
+    const res = await httpRequest(`${CSR_API_BASE_URL}/organizations/ingest`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${OPENCLAW_AGENT_TOKEN}`, 'Content-Type': 'application/json' },
+    }, { name, org_type: 'HUMANITARIAN_NGO', website, email, phone });
+
+    if (res.statusCode >= 200 && res.statusCode < 300 && res.data && res.data.success) {
+      if (res.data.action === 'inserted') inserted++; else filled++;
+      if (email) withEmail++;
+      if (phone) withPhone++;
+    } else {
+      failed++;
+    }
+
+    if ((i + 1) % 25 === 0) {
+      await send(`⏳ Progres: <b>${i + 1}/${names.length}</b> diproses — baru: ${inserted}, sudah ada: ${filled}, gagal: ${failed}.`);
+    }
+  }
+
+  await send(
+    `🏁 <b>Discovery Selesai untuk ${domainArg}</b>\n\n` +
+    `• Lembaga ditemukan : <b>${names.length}</b>\n` +
+    `• Baru disimpan     : <b>${inserted}</b>\n` +
+    `• Sudah ada (diisi)  : <b>${filled}</b>\n` +
+    `• Gagal simpan      : <b>${failed}</b>\n` +
+    `• Dengan email valid : <b>${withEmail}</b>\n` +
+    `• Dengan no HP/WA    : <b>${withPhone}</b>\n\n` +
+    `<i>Hanya data terverifikasi yang disimpan (email domain cocok, no HP ber-+62 & lolos verifier).</i>`
+  );
+
+  return { discovered: names.length, inserted, filled, failed };
+}
+
+module.exports = { executeDiscoverTask, scrapeMembers };

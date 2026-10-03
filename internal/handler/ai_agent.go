@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"sovera-core-api/internal/model"
+	"sovera-core-api/internal/pkg/phoneverifier"
 	"sovera-core-api/internal/repository"
 )
 
@@ -685,6 +686,99 @@ func (h *AIAgentHandler) MatchProgram(c *fiber.Ctx) error {
 		"message":   "Program matching executed successfully",
 		"data":      result,
 		"timestamp": time.Now().UTC().Format(time.RFC3339),
+	})
+}
+
+// IngestOrganizationRequest is the payload the OpenClaw /discover agent posts
+// for each humanitarian organization it finds.
+type IngestOrganizationRequest struct {
+	Name    string `json:"name"`
+	OrgType string `json:"org_type"` // optional; defaults to HUMANITARIAN_NGO
+	Website string `json:"website"`
+	Email   string `json:"email"`
+	Phone   string `json:"phone"`
+}
+
+// IngestOrganization upserts a discovered organization by name:
+//   - if the name does not exist, insert it with whatever verified fields are given;
+//   - if it already exists, keep the row but fill ONLY the contact fields that are
+//     still empty (never overwrite existing data).
+//
+// The phone is re-validated server-side with phoneverifier before being stored, so
+// a bad number from scraping never lands in the table.
+func (h *AIAgentHandler) IngestOrganization(c *fiber.Ctx) error {
+	if h.dbPool == nil {
+		return c.Status(503).JSON(fiber.Map{"error": "database unavailable"})
+	}
+	var req IngestOrganizationRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": "invalid request body"})
+	}
+	req.Name = strings.TrimSpace(req.Name)
+	if req.Name == "" {
+		return c.Status(400).JSON(fiber.Map{"error": "name is required"})
+	}
+	orgType := strings.TrimSpace(req.OrgType)
+	if orgType == "" {
+		orgType = "HUMANITARIAN_NGO"
+	}
+
+	// Validate/normalize phone server-side; drop it if it does not pass.
+	phone := strings.TrimSpace(req.Phone)
+	if phone != "" {
+		if ok, normalized, _ := phoneverifier.DefaultVerifier.Verify(phone); ok {
+			phone = normalized
+		} else {
+			phone = ""
+		}
+	}
+	email := strings.TrimSpace(req.Email)
+	website := strings.TrimSpace(req.Website)
+
+	ctx := c.Context()
+
+	// Does an organization with this name already exist?
+	var existingID string
+	err := h.dbPool.QueryRow(ctx,
+		`SELECT id::text FROM organizations WHERE lower(name)=lower($1) AND deleted_at IS NULL LIMIT 1`,
+		req.Name).Scan(&existingID)
+
+	if err != nil {
+		// Not found -> insert new.
+		var newID string
+		insErr := h.dbPool.QueryRow(ctx, `
+			INSERT INTO organizations (name, type, org_type, subscription_tier, account_status, is_verified, contact_email, contact_phone, created_at, updated_at)
+			VALUES ($1, 'ORGANIZATION', $2, 'FREE_TRIAL', 'QUALIFIED', false, NULLIF($3,''), NULLIF($4,''), NOW(), NOW())
+			RETURNING id::text
+		`, req.Name, orgType, email, phone).Scan(&newID)
+		if insErr != nil {
+			return c.Status(500).JSON(fiber.Map{"error": insErr.Error()})
+		}
+		_ = website // organizations table has no website column; kept in payload for forward-compat
+		return c.JSON(fiber.Map{
+			"success": true,
+			"action":  "inserted",
+			"id":      newID,
+			"name":    req.Name,
+		})
+	}
+
+	// Found -> fill only empty contact fields (COALESCE keeps existing non-empty values).
+	_, updErr := h.dbPool.Exec(ctx, `
+		UPDATE organizations
+		SET contact_email = COALESCE(NULLIF(contact_email,''), NULLIF($2,'')),
+		    contact_phone = COALESCE(NULLIF(contact_phone,''), NULLIF($3,'')),
+		    updated_at = NOW()
+		WHERE id = $1::uuid
+	`, existingID, email, phone)
+	if updErr != nil {
+		return c.Status(500).JSON(fiber.Map{"error": updErr.Error()})
+	}
+	return c.JSON(fiber.Map{
+		"success": true,
+		"action":  "skipped_existing_filled_empty",
+		"id":      existingID,
+		"name":    req.Name,
 	})
 }
 

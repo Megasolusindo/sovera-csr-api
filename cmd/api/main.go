@@ -237,6 +237,7 @@ func main() {
 	aiGroup.Post("/companies/:id/monitor", aiAgentHandler.ToggleCompanyWatchlist)
 	aiGroup.Post("/companies/:id/enrich", aiAgentHandler.EnrichCompany)
 	aiGroup.Post("/matching", aiAgentHandler.MatchProgram)
+	aiGroup.Post("/organizations/ingest", aiAgentHandler.IngestOrganization)
 	aiGroup.Get("/search", aiAgentHandler.SearchCorporateData)
 
 	// Granular Tool API Surface (§4.4)
