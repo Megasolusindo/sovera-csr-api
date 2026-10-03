@@ -21,6 +21,7 @@ type OrganizationItem struct {
 	ContactName      string    `json:"contact_name" db:"contact_name"`
 	ContactEmail     string    `json:"contact_email" db:"contact_email"`
 	ContactPhone     string    `json:"contact_phone" db:"contact_phone"`
+	Website          string    `json:"website" db:"website"`
 	CreatedAt        time.Time `json:"created_at" db:"created_at"`
 	UpdatedAt        time.Time `json:"updated_at" db:"updated_at"`
 }
@@ -71,6 +72,7 @@ func (r *OrganizationRepository) ListOrganizations(ctx context.Context, page, pa
 			COALESCE(o.contact_name, '') AS contact_name,
 			COALESCE(o.contact_email, '') AS contact_email,
 			COALESCE(o.contact_phone, '') AS contact_phone,
+			COALESCE(o.website, '') AS website,
 			o.created_at,
 			o.updated_at
 		FROM organizations o
@@ -95,6 +97,7 @@ func (r *OrganizationRepository) ListOrganizations(ctx context.Context, page, pa
 			&item.ID, &item.Name, &item.OrgType, &item.SubscriptionTier,
 			&item.AccountStatus, &item.UsersCount,
 			&item.ContactName, &item.ContactEmail, &item.ContactPhone,
+			&item.Website,
 			&item.CreatedAt, &item.UpdatedAt,
 		); err != nil {
 			return nil, 0, fmt.Errorf("failed to scan organization row: %w", err)
@@ -133,6 +136,7 @@ type UpdateOrganizationInput struct {
 	ContactName      string `json:"contact_name"`
 	ContactEmail     string `json:"contact_email"`
 	ContactPhone     string `json:"contact_phone"`
+	Website          string `json:"website"`
 }
 
 // Update modifies an existing organization record in the database.
@@ -155,13 +159,14 @@ func (r *OrganizationRepository) Update(ctx context.Context, id string, input Up
 			contact_name = COALESCE(NULLIF($6, ''), contact_name),
 			contact_email = COALESCE(NULLIF($7, ''), contact_email),
 			contact_phone = COALESCE(NULLIF($8, ''), contact_phone),
+			website = COALESCE(NULLIF($9, ''), website),
 			updated_at = NOW()
 		WHERE id = $1
-		RETURNING id, name, COALESCE(org_type, 'HUMANITARIAN_NGO'), COALESCE(subscription_tier, 'PRO'), COALESCE(account_status, 'PROSPECT'), COALESCE(contact_name, ''), COALESCE(contact_email, ''), COALESCE(contact_phone, ''), created_at, updated_at;
+		RETURNING id, name, COALESCE(org_type, 'HUMANITARIAN_NGO'), COALESCE(subscription_tier, 'PRO'), COALESCE(account_status, 'PROSPECT'), COALESCE(contact_name, ''), COALESCE(contact_email, ''), COALESCE(contact_phone, ''), COALESCE(website, ''), created_at, updated_at;
 	`
 	var item OrganizationItem
-	err := r.pool.QueryRow(ctx, query, id, input.Name, input.OrgType, input.SubscriptionTier, input.AccountStatus, input.ContactName, input.ContactEmail, input.ContactPhone).Scan(
-		&item.ID, &item.Name, &item.OrgType, &item.SubscriptionTier, &item.AccountStatus, &item.ContactName, &item.ContactEmail, &item.ContactPhone, &item.CreatedAt, &item.UpdatedAt,
+	err := r.pool.QueryRow(ctx, query, id, input.Name, input.OrgType, input.SubscriptionTier, input.AccountStatus, input.ContactName, input.ContactEmail, input.ContactPhone, input.Website).Scan(
+		&item.ID, &item.Name, &item.OrgType, &item.SubscriptionTier, &item.AccountStatus, &item.ContactName, &item.ContactEmail, &item.ContactPhone, &item.Website, &item.CreatedAt, &item.UpdatedAt,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to update organization: %w", err)
