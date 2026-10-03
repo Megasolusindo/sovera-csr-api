@@ -747,14 +747,13 @@ func (h *AIAgentHandler) IngestOrganization(c *fiber.Ctx) error {
 		// Not found -> insert new.
 		var newID string
 		insErr := h.dbPool.QueryRow(ctx, `
-			INSERT INTO organizations (name, type, org_type, subscription_tier, account_status, is_verified, contact_email, contact_phone, created_at, updated_at)
-			VALUES ($1, 'ORGANIZATION', $2, 'FREE_TRIAL', 'QUALIFIED', false, NULLIF($3,''), NULLIF($4,''), NOW(), NOW())
+			INSERT INTO organizations (name, type, org_type, subscription_tier, account_status, is_verified, contact_email, contact_phone, website, created_at, updated_at)
+			VALUES ($1, 'ORGANIZATION', $2, 'FREE_TRIAL', 'QUALIFIED', false, NULLIF($3,''), NULLIF($4,''), NULLIF($5,''), NOW(), NOW())
 			RETURNING id::text
-		`, req.Name, orgType, email, phone).Scan(&newID)
+		`, req.Name, orgType, email, phone, website).Scan(&newID)
 		if insErr != nil {
 			return c.Status(500).JSON(fiber.Map{"error": insErr.Error()})
 		}
-		_ = website // organizations table has no website column; kept in payload for forward-compat
 		return c.JSON(fiber.Map{
 			"success": true,
 			"action":  "inserted",
@@ -768,9 +767,10 @@ func (h *AIAgentHandler) IngestOrganization(c *fiber.Ctx) error {
 		UPDATE organizations
 		SET contact_email = COALESCE(NULLIF(contact_email,''), NULLIF($2,'')),
 		    contact_phone = COALESCE(NULLIF(contact_phone,''), NULLIF($3,'')),
+		    website = COALESCE(NULLIF(website,''), NULLIF($4,'')),
 		    updated_at = NOW()
 		WHERE id = $1::uuid
-	`, existingID, email, phone)
+	`, existingID, email, phone, website)
 	if updErr != nil {
 		return c.Status(500).JSON(fiber.Map{"error": updErr.Error()})
 	}
